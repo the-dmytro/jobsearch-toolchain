@@ -5,7 +5,10 @@
 .pii-denylist.txt
 
 # Personal data (tracked on `personal` branch via git add -f)
-/profile/
+# Keep scaffold templates public; ignore filled-in profile files.
+/profile/*
+!/profile/templates/
+!/profile/templates/**
 /Docs/Tracking/
 /outputs/
 

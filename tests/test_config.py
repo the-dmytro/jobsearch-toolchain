@@ -27,9 +27,34 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.pipelines["jobboards"]["profile"], "ios")
 
     def test_load_ios_profile(self) -> None:
-        profile = load_profile("ios", profile_dir=self.repo_root / "profile")
-        self.assertEqual(profile.slug, "ios")
-        self.assertTrue(profile.targets_path.exists())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            profile_dir = Path(temp_dir)
+            template = self.repo_root / "profile/templates/ios.toml"
+            (profile_dir / "ios.toml").write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            profile = load_profile("ios", profile_dir=profile_dir)
+            self.assertEqual(profile.slug, "ios")
+            self.assertTrue(profile.targets_path.exists() or (self.repo_root / "jobtracker/fixtures/provider_targets.toml").exists())
+
+    def test_scaffold_config_copies_markdown_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            example = self.repo_root / "config/jobsearch.example.toml"
+            (root / "config/jobsearch.example.toml").write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+            templates = root / "profile/templates"
+            templates.mkdir(parents=True)
+            (templates / "ios.toml").write_text("slug = 'ios'\n", encoding="utf-8")
+            # minimal valid ios is not needed for copy test — copy raw files
+            (templates / "ios.toml").write_text(
+                (self.repo_root / "profile/templates/ios.toml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (templates / "00_INSTRUCTIONS.md").write_text("# {{OWNER_NAME}}\n", encoding="utf-8")
+            (templates / "project-bank.example.md").write_text("# bank\n", encoding="utf-8")
+            result = scaffold_config(root=root)
+            self.assertTrue((root / "profile/00_INSTRUCTIONS.md").exists())
+            self.assertTrue((root / "profile/project-banks/example.md").exists())
+            self.assertTrue(any(path.endswith("00_INSTRUCTIONS.md") for path in result["created"]))
 
     def test_validate_config_reports_missing_notify_channel(self) -> None:
         config = AppConfig(

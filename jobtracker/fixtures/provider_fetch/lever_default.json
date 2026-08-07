@@ -1,0 +1,32 @@
+[
+  {
+    "id": "3f0a9c71-1111-4d55-8f0e-000000000001",
+    "text": "Senior iOS Engineer (SwiftUI)",
+    "hostedUrl": "https://jobs.lever.co/default/3f0a9c71-1111-4d55-8f0e-000000000001",
+    "applyUrl": "https://jobs.lever.co/default/3f0a9c71-1111-4d55-8f0e-000000000001/apply",
+    "createdAt": "2026-04-17T08:00:00+00:00",
+    "updatedAt": "2026-04-21T08:00:00+00:00",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Engineering",
+      "location": "Remote",
+      "team": "Mobile"
+    },
+    "descriptionPlain": "Build and ship our iPhone app. This role is remote friendly and reports to the Mobile lead."
+  },
+  {
+    "id": "3f0a9c71-2222-4d55-8f0e-000000000002",
+    "text": "Product Designer",
+    "hostedUrl": "https://jobs.lever.co/default/3f0a9c71-2222-4d55-8f0e-000000000002",
+    "applyUrl": "https://jobs.lever.co/default/3f0a9c71-2222-4d55-8f0e-000000000002/apply",
+    "createdAt": "2026-04-16T08:00:00+00:00",
+    "updatedAt": "2026-04-16T08:00:00+00:00",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Design",
+      "location": "Lisbon, Portugal",
+      "team": "Design"
+    },
+    "descriptionPlain": "Shape the end-to-end experience of our consumer products from our Lisbon office."
+  }
+]

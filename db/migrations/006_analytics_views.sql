@@ -173,15 +173,7 @@ select
 from public.evaluations e
 left join public.applications a on a.opportunity_id = e.opportunity_id
 group by 1
-order by
-  case score_bucket
-    when '0-2' then 1
-    when '3-4' then 2
-    when '5-6' then 3
-    when '7-8' then 4
-    when '9-10' then 5
-    else 6
-  end;
+order by 1;
 
 grant select on public.v_funnel_summary to authenticated;
 grant select on public.v_weekly_activity to authenticated;

@@ -71,8 +71,8 @@ python -m jobtracker db-smoke
 ```bash
 python -m jobtracker fetch-dou \
   --dry-run \
-  --fixture-dir jobtracker/fixtures/provider-fetch \
-  --payload-out outputs/provider-fetch/dou.payload.json
+  --fixture-dir jobtracker/fixtures/provider_fetch \
+  --payload-out outputs/provider_fetch/dou.payload.json
 ```
 
 Inspect the payload JSON, then run without `--dry-run` to persist.

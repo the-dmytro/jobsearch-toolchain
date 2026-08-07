@@ -1,0 +1,57 @@
+[role_lane]
+name = "iOS/macOS"
+include_terms = [
+  "ios",
+  "swiftui",
+  "iphone",
+  "apple platform",
+  "mobile ios",
+]
+exclude_terms = [
+  "android",
+  "react native",
+  "flutter",
+  "qa",
+  "designer",
+  "product manager",
+  "project manager",
+  "recruiter",
+  "sales",
+  "support",
+  "backend",
+  "frontend",
+  "front end",
+  "full stack",
+]
+
+[providers.dou]
+feed_url = "https://jobs.dou.ua/vacancies/feeds/?category=iOS%2FmacOS"
+listing_url = "https://jobs.dou.ua/vacancies/?category=iOS%2FmacOS"
+default_detail_limit = 10
+
+[providers.workua]
+listing_urls = ["https://www.work.ua/jobs-it-ios/"]
+default_detail_limit = 10
+
+[providers.djinni]
+listing_url = "https://djinni.co/jobs/keyword-ios/"
+default_detail_limit = 10
+experimental = true
+
+[providers.greenhouse]
+manual_board_tokens = [
+  "oura",
+  "robinhood",
+  "monzo",
+]
+denylist = []
+default_max_boards = 10
+
+[providers.ashby]
+manual_board_tokens = ["default"]
+default_max_boards = 10
+
+[providers.lever]
+manual_board_tokens = ["default"]
+default_max_boards = 10
+

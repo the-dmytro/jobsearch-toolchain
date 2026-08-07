@@ -1,0 +1,18 @@
+[profile]
+slug = "data-ml-ai"
+name = "Data/ML/AI"
+output_slug = "data-ml-ai-jobboards"
+targets_path = "profile/provider_targets_data_ml_ai.toml"
+report_path_template = "outputs/reports/{date}-data-ml-ai-jobboards-triage.md"
+email_body_template = "{date}-data-ml-ai-email-body.txt"
+email_subject_prefix = "DOU/Work.ua/Djinni Data/ML/AI job triage"
+profile_files = [
+  "profile/00_PROJECT_INSTRUCTIONS.md",
+  "profile/01_PREFERENCES.md",
+  "profile/Data_ML_AI/01_applied_ai_profile.md",
+]
+evaluation_notes = [
+  "Evaluate as a senior software engineer transitioning into Python, data, and applied AI.",
+  "Keep junior/middle bridge roles only as spare variants in a separate bottom section.",
+  "Remote availability must be explicit before a role is recommended.",
+]

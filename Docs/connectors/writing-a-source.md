@@ -23,10 +23,10 @@ exclude_terms = ["intern", "manager"]
 
 ```bash
 python -m jobtracker run jobboards --dry-run
-# or add acme_careers to a pipeline's sources list
+# or add acme_careers to a pipeline's providers list
 ```
 
-Supported `kind` values: `rss`, `jsonld`, `html`, `json-api`, `sitemap`, `csv`.
+Supported `kind` values: `rss`, `jsonld`, `html`, `json_api` (alias `json-api`), `sitemap`, `csv`.
 
 ### HTML selector example
 
@@ -48,34 +48,30 @@ For named providers with custom parsing logic.
 ```python
 from __future__ import annotations
 
-from typing import Iterable
-
-from jobtracker.core.context import SourceContext
-from jobtracker.core.models import Candidate
-from jobtracker.sources.base import JobSource
+from jobtracker.core.models import Candidate, CollectionContext
 from jobtracker.sources.registry import register_source
-from jobtracker.sources.shared.infer import matches_lane
-from jobtracker.sources.shared.fetch import LiveFetcher
 
 
 @register_source
-class MyBoardSource(JobSource):
+class MyBoardSource:
     slug = "myboard"
 
-    def discover(self, ctx: SourceContext) -> Iterable[Candidate]:
-        url = ctx.options["listing_url"]
+    def discover(self, ctx: CollectionContext) -> tuple[list[Candidate], str, list[str]]:
+        url = ctx.options.get("listing_url") or ctx.provider_config.get("listing_url")
         html = ctx.fetcher.get_text(url, "list")
         # ... parse html into Candidate objects ...
-        yield Candidate(
-            external_id="123",
-            title="Example Role",
-            source_url="https://myboard.example.com/jobs/123",
-            apply_url="https://myboard.example.com/jobs/123/apply",
-        )
+        candidates = [
+            Candidate(
+                external_id="123",
+                title="Example Role",
+                source_url="https://myboard.example.com/jobs/123",
+                apply_url="https://myboard.example.com/jobs/123/apply",
+            )
+        ]
+        return candidates, "completed", []
 
-    def health(self, ctx: SourceContext):
-        from jobtracker.core.context import HealthReport
-        return HealthReport(ok=True, message="myboard reachable")
+    def health(self, ctx: CollectionContext) -> list[str]:
+        return []
 ```
 
 **Enable in TOML:**
@@ -88,7 +84,7 @@ listing_url = "https://myboard.example.com/jobs"
 **Test with fixtures:**
 
 ```bash
-python -m jobtracker fetch-myboard --dry-run --fixture-dir tests/fixtures/myboard
+python -m jobtracker fetch-myboard --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 ```
 
 ## 3. Out-of-tree plugin
@@ -118,7 +114,7 @@ python -m jobtracker doctor   # should list myboard in available sources
 
 ## Contract
 
-Every source yields `Candidate` objects. The registry builds automation payloads via `sources/shared/payload.py`. Do not change the payload JSON shape — see `Docs/DB/AUTOMATION_PAYLOAD_CONTRACT.md`.
+Every source implements `discover(ctx: CollectionContext) -> tuple[list[Candidate], status, blockers]`. The registry builds automation payloads via `sources/shared/payload.py`. Do not change the payload JSON shape — see `Docs/DB/AUTOMATION_PAYLOAD_CONTRACT.md`.
 
 ## Testing
 

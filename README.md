@@ -10,6 +10,17 @@ Open-source job-search automation: discover opportunities from job boards and em
 - **Next.js CRM** — dashboard with funnel, velocity, source effectiveness, pipeline aging
 - **Agent-friendly docs** — playbooks and `AGENTS.md` for AI-assisted workflows
 
+```mermaid
+flowchart LR
+  CLI["jobtracker CLI"] --> Sources["sources / mail"]
+  Sources --> Payloads["payloads"]
+  Payloads --> Store["Postgres store"]
+  Store --> CRM["Next.js CRM"]
+  CLI --> Notify["notify"]
+```
+
+Architecture diagrams (discovery, registries, mail, pipelines, config): [Docs/architecture.md](Docs/architecture.md).
+
 ## Quick start
 
 ```bash
@@ -26,7 +37,7 @@ python3 -m venv .venv
 .venv/bin/python -m jobtracker doctor --skip-network
 
 # Dry-run collectors with bundled fixtures (no network)
-.venv/bin/python -m jobtracker fetch-dou --dry-run --fixture-dir jobtracker/fixtures/provider-fetch
+.venv/bin/python -m jobtracker fetch-dou --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 .venv/bin/python -m jobtracker benchmark-sources --providers dou,workua,djinni,greenhouse
 ```
 
@@ -37,7 +48,11 @@ python3 -m venv .venv
 3. Fill `profile/` from `profile/templates/` — your preferences, CV source, project banks
 4. Apply migrations: `.venv/bin/python -m jobtracker migrate`
 
-See [docs/getting-started.md](docs/getting-started.md) and [docs/configuration.md](docs/configuration.md).
+<<<<<<< HEAD
+See [Docs/getting-started.md](Docs/getting-started.md) and [Docs/configuration.md](Docs/configuration.md).
+=======
+See [Docs/getting-started.md](Docs/getting-started.md), [Docs/configuration.md](Docs/configuration.md), and [Docs/architecture.md](Docs/architecture.md).
+>>>>>>> 185c4ac (Add architecture diagrams, CLI map, and analytics view docs)
 
 ## CRM
 
@@ -64,8 +79,9 @@ jobtracker/             Python CLI and connector framework
   notify/               Report delivery (email, webhook, Slack, Telegram)
 crm/                    Next.js CRM dashboard
 db/migrations/          PostgreSQL schema
+Docs/                   Architecture, CLI map, configuration
 Docs/DB/                Schema docs and payload contract
-docs/playbooks/         Automation instructions for agents
+Docs/playbooks/         Automation instructions for agents
 ```
 
 ## Automation
@@ -88,7 +104,7 @@ Cron, launchd, and GitHub Actions examples: [examples/automation/](examples/auto
 | In-tree service class | Named provider with custom parsing |
 | Out-of-tree plugin (entry points) | Private connector without forking |
 
-Guides: [docs/connectors/](docs/connectors/).
+Guides: [Docs/connectors/](Docs/connectors/).
 
 ## License
 

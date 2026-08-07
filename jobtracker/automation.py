@@ -45,13 +45,24 @@ def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[st
 
     templates_dir = project_root / PROFILE_TEMPLATE_DIR
     if templates_dir.exists():
-        for template_path in sorted(templates_dir.glob("*.toml")):
-            destination = profile_dir / template_path.name
-            if destination.exists() and not force:
-                skipped.append(str(destination))
-                continue
-            shutil.copyfile(template_path, destination)
-            created.append(str(destination))
+        for pattern in ("*.toml", "*.md"):
+            for template_path in sorted(templates_dir.glob(pattern)):
+                destination = profile_dir / template_path.name
+                if destination.exists() and not force:
+                    skipped.append(str(destination))
+                    continue
+                shutil.copyfile(template_path, destination)
+                created.append(str(destination))
+        banks_example = templates_dir / "project-bank.example.md"
+        banks_dir = profile_dir / "project-banks"
+        if banks_example.exists():
+            banks_dir.mkdir(parents=True, exist_ok=True)
+            bank_dest = banks_dir / "example.md"
+            if bank_dest.exists() and not force:
+                skipped.append(str(bank_dest))
+            else:
+                shutil.copyfile(banks_example, bank_dest)
+                created.append(str(bank_dest))
     return {"created": created, "skipped": skipped}
 
 
@@ -72,7 +83,7 @@ def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
     results: dict[str, list[str]] = {}
     fetcher = LiveFetcher(FetchMetrics())
     try:
-        for slug, source in sorted(source_registry.items()):
+        for slug, source in sorted(source_registry.all().items()):
             ctx = CollectionContext(
                 conn=None,
                 fetcher=fetcher,

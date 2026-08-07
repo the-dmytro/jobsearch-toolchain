@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-from ..base import DuplicateMatch, JobStore, UpsertResult
+from ..base import DuplicateMatch, UpsertResult
 
 
 class MemoryJobStore:
@@ -17,9 +19,6 @@ class MemoryJobStore:
         payload_path: str,
         report_path: str | None = None,
     ) -> UpsertResult:
-        import json
-        from pathlib import Path
-
         payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
         run = payload.get("run") or {}
         run_key = str(run.get("run_key") or payload.get("run_key") or f"{provider_slug}-memory")
@@ -31,6 +30,24 @@ class MemoryJobStore:
             "report_path": report_path,
         }
         self.opportunities.extend(opportunities)
+        for opportunity in opportunities:
+            external_id = str(opportunity.get("external_id") or "").strip()
+            if not external_id:
+                continue
+            key = (provider_slug, external_id)
+            match = DuplicateMatch(
+                match_type="external_id",
+                opportunity_id=str(opportunity.get("id") or external_id),
+                company=opportunity.get("company"),
+                title=opportunity.get("title"),
+                source_url=opportunity.get("source_url"),
+                apply_url=opportunity.get("apply_url"),
+            )
+            self.duplicates.setdefault(key, []).append(match)
+            company = str(opportunity.get("company") or "").strip().lower()
+            title = str(opportunity.get("title") or "").strip().lower()
+            if company and title:
+                self.duplicates.setdefault((provider_slug, f"title:{company}:{title}"), []).append(match)
         return UpsertResult(run_key=run_key, opportunities=len(opportunities), evaluations=evaluations)
 
     def check_duplicates(
@@ -40,8 +57,23 @@ class MemoryJobStore:
         title: str | None,
         external_id: str | None = None,
     ) -> list[DuplicateMatch]:
-        key = (provider_slug, external_id or "")
-        return list(self.duplicates.get(key, []))
+        matches: list[DuplicateMatch] = []
+        seen: set[str] = set()
+        keys: list[tuple[str, str]] = []
+        if external_id:
+            keys.append((provider_slug, external_id))
+        company_key = str(company or "").strip().lower()
+        title_key = str(title or "").strip().lower()
+        if company_key and title_key:
+            keys.append((provider_slug, f"title:{company_key}:{title_key}"))
+        for key in keys:
+            for match in self.duplicates.get(key, []):
+                marker = f"{match.match_type}:{match.opportunity_id}:{match.title}:{match.source_url}"
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                matches.append(match)
+        return matches
 
     def export_application_summary(self, application_id: str) -> str:
         return f"# Application summary\n\n- Application ID: {application_id}\n"
