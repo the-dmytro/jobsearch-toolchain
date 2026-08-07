@@ -69,11 +69,21 @@ def _test_db_reachable() -> bool:
         return False
 
 
+def _bootstrap_plain_postgres(conn) -> None:
+    bootstrap = Path(__file__).resolve().parent.parent / "db" / "ci" / "plain_postgres_bootstrap.sql"
+    if not bootstrap.exists():
+        return
+    with conn.cursor() as cur:
+        cur.execute(bootstrap.read_text(encoding="utf-8"))
+    conn.commit()
+
+
 @unittest.skipUnless(_test_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
 class DbIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         with connect_test() as conn:
+            _bootstrap_plain_postgres(conn)
             apply_migrations(conn)
 
     def setUp(self) -> None:

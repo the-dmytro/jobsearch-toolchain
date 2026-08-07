@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..config import load_settings
+from ..core.errors import UnknownConnectorError
+from ..core.registry import Registry
 from ..utils import slugify
 from .base import AlertParser, MailInbox
 from .generic.imap import ImapMailInbox, MailImapClient, resolve_mail_folder
@@ -19,12 +21,24 @@ def load_mail_folder_aliases() -> dict[str, list[str]]:
 MAIL_FOLDER_ALIASES = load_mail_folder_aliases()
 GMAIL_LABEL_ALIASES = MAIL_FOLDER_ALIASES
 
+parser_registry: Registry[AlertParser] = Registry("mail.parser")
 
-parser_registry: dict[str, AlertParser] = {
-    "upwork": UpworkAlertParser(),
-    "linkedin": LinkedInAlertParser(),
-    "ats_ack": AtsAckParser(),
-}
+
+def _load_parser_entry_point(entry_point: Any) -> AlertParser:
+    loaded = entry_point.load()
+    if isinstance(loaded, type):
+        return loaded()
+    return loaded
+
+
+def _register_builtin_parsers() -> None:
+    parser_registry.register("upwork")(UpworkAlertParser())
+    parser_registry.register("linkedin")(LinkedInAlertParser())
+    parser_registry.register("ats_ack")(AtsAckParser())
+
+
+_register_builtin_parsers()
+parser_registry.load_entry_points("jobtracker.mail.parsers", entry_point_loader=_load_parser_entry_point)
 
 
 def inbox_factory(kind: str = "imap", **kwargs: Any) -> MailInbox:
@@ -43,10 +57,11 @@ def message_matches_provider(provider: str, message: dict[str, Any]) -> bool:
         return message_matches_upwork(message)
     if provider_slug == "linkedin":
         return message_matches_linkedin(message)
-    parser = parser_registry.get(provider_slug)
-    if parser is not None:
-        return parser.matches(message)
-    return True
+    try:
+        parser = parser_registry.get(provider_slug)
+    except UnknownConnectorError:
+        return True
+    return parser.matches(message)
 
 
 class ProviderFilterResult:

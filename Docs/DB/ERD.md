@@ -48,6 +48,41 @@ erDiagram
 
 
 
+## Analytics views → CRM
+
+Defined in `db/migrations/006_analytics_views.sql` (`security_invoker = true` so RLS still applies). Consumed by `crm/lib/analytics.ts` and dashboard/insights components.
+
+| View | What it aggregates | CRM consumer |
+|------|--------------------|--------------|
+| `v_funnel_summary` | Opportunity → evaluation → applied → interviewing → offer counts and conversion % | `FunnelCard` via `fetchDashboardBundle` |
+| `v_weekly_activity` | Weekly counts of opportunities, applications, interviews | `VelocityCard` and `KpiRow` (trend context) |
+| `v_response_latency` | Days from `applied_at` to first reply / interview_invite / response event | Defined for analytics; **not** queried by the current CRM UI (response rate KPIs use `applications` + `application_events` directly) |
+| `v_source_effectiveness` | Per-provider opportunities, applications, interviews, offers, app→interview % | `SourceEffectivenessCard` |
+| `v_pipeline_aging` | Open applications with `days_in_stage` | `PipelineAgingCard` |
+| `v_score_outcomes` | Evaluation score buckets with offer / resolved counts | Insights page (`InsightsPage` score distribution chart via `fetchInsightsBundle`) |
+
+Dashboard wiring: `crm/components/dashboard/dashboard-page.tsx` loads the funnel, weekly, source, and aging views. Insights: `crm/components/insights/insights-page.tsx` loads `v_score_outcomes` plus table-level outcome/compensation queries.
+
+```mermaid
+flowchart LR
+  subgraph Views["006_analytics_views.sql"]
+    F[v_funnel_summary]
+    W[v_weekly_activity]
+    R[v_response_latency]
+    S[v_source_effectiveness]
+    A[v_pipeline_aging]
+    O[v_score_outcomes]
+  end
+
+  F --> FunnelCard
+  W --> VelocityCard
+  W --> KpiRow
+  S --> SourceEffectivenessCard
+  A --> PipelineAgingCard
+  O --> Insights["InsightsPage"]
+  R -.->|"schema only today"| Unused["no CRM query yet"]
+```
+
 ## Notes
 
 - Tables `artifacts` and `insights` use polymorphic links via `(related_type, related_id)` and therefore have no FK constraints for those fields.

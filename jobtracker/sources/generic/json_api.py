@@ -32,7 +32,12 @@ class JsonApiSource:
         if not _matches_lane(title, lane):
             metrics.jobs_skipped_by_filter += 1
             return None
-        source_url = clean_url(item.get("absolute_url") or item.get("hostedUrl") or item.get("applyUrl"))
+        source_url = clean_url(
+            item.get("absolute_url")
+            or item.get("hostedUrl")
+            or item.get("jobUrl")
+            or item.get("applyUrl")
+        )
         if not source_url:
             return None
         job_id = item.get("id")
@@ -61,7 +66,8 @@ class JsonApiSource:
 
     def discover(self, ctx: CollectionContext) -> tuple[list[Candidate], str, list[str]]:
         opts = ctx.options
-        tokens = opts.get("board_tokens") or opts.get("tokens") or []
+        provider_config = ctx.provider_config
+        tokens = opts.get("board_tokens") or opts.get("tokens") or provider_config.get("manual_board_tokens") or []
         max_boards = opts.get("max_boards")
         lane = ctx.role_lane
         metrics = ctx.metrics

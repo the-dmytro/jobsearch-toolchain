@@ -10,9 +10,17 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from jobtracker.core.errors import UnknownConnectorError
 from jobtracker.core.models import CollectionContext, CollectionResult, FetchMetrics
+from jobtracker.core.registry import Registry
 from jobtracker.payloads import upsert_run_payload
 from jobtracker.sources.base import JobSource
+from jobtracker.sources.generic.csv import CsvSource
+from jobtracker.sources.generic.html import HtmlSource
+from jobtracker.sources.generic.json_api import JsonApiSource
+from jobtracker.sources.generic.jsonld import JsonLdSource
+from jobtracker.sources.generic.rss import RssSource
+from jobtracker.sources.generic.sitemap import SitemapSource
 from jobtracker.sources.shared.fetch import FIXTURE_ROOT, FixtureFetcher, LiveFetcher
 from jobtracker.sources.shared.payload import _build_payload, _json, _payload_path, _write_payload
 from jobtracker.utils import normalize_space, slugify, utc_now
@@ -21,21 +29,135 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROFILE_TARGETS = _REPO_ROOT / "profile" / "provider_targets.toml"
 _FIXTURE_TARGETS = Path(__file__).resolve().parents[1] / "fixtures" / "provider_targets.toml"
 TARGETS_PATH = _PROFILE_TARGETS if _PROFILE_TARGETS.exists() else _FIXTURE_TARGETS
+DEFAULT_JOBSEARCH_CONFIG = _REPO_ROOT / "config" / "jobsearch.toml"
 
-source_registry: dict[str, JobSource] = {}
+source_registry: Registry[JobSource] = Registry("source")
+
+GENERIC_SOURCE_KINDS: dict[str, type] = {
+    "rss": RssSource,
+    "jsonld": JsonLdSource,
+    "html": HtmlSource,
+    "json_api": JsonApiSource,
+    "json-api": JsonApiSource,
+    "sitemap": SitemapSource,
+    "csv": CsvSource,
+}
 
 T = TypeVar("T", bound=type)
 
 
 def register_source(cls: T) -> T:
     instance = cls()
-    source_registry[instance.slug] = instance
+    source_registry.register(instance)
     return cls
 
 
 def _load_targets(path: str | Path | None = None) -> dict[str, Any]:
     target_path = Path(path or os.getenv("JOBTRACKER_PROVIDER_TARGETS") or TARGETS_PATH)
     return tomllib.loads(target_path.read_text(encoding="utf-8"))
+
+
+def _load_jobsearch_sources(
+    *,
+    config_path: str | Path | None = None,
+    root: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    project_root = root or _REPO_ROOT
+    path = Path(config_path) if config_path else project_root / "config" / "jobsearch.toml"
+    if not path.is_absolute():
+        path = project_root / path
+    if not path.exists():
+        example = project_root / "config" / "jobsearch.example.toml"
+        path = example if example.exists() else path
+    if not path.exists():
+        return {}
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    sources_raw = data.get("sources") or {}
+    if not isinstance(sources_raw, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for slug, config in sources_raw.items():
+        if isinstance(config, dict):
+            result[slugify(str(slug))] = dict(config)
+    local_path = path.with_name(path.stem + ".local.toml")
+    if local_path.exists():
+        local_data = tomllib.loads(local_path.read_text(encoding="utf-8"))
+        local_sources = local_data.get("sources") or {}
+        if isinstance(local_sources, dict):
+            for slug, config in local_sources.items():
+                if isinstance(config, dict):
+                    key = slugify(str(slug))
+                    result[key] = {**result.get(key, {}), **config}
+    return result
+
+
+def _normalize_kind(kind: str | None) -> str | None:
+    if not kind:
+        return None
+    return str(kind).strip().lower()
+
+
+def build_generic_source(kind: str, slug: str) -> JobSource:
+    normalized = _normalize_kind(kind) or ""
+    # Accept both json_api and json-api
+    cls = GENERIC_SOURCE_KINDS.get(normalized) or GENERIC_SOURCE_KINDS.get(normalized.replace("-", "_"))
+    if cls is None:
+        available = ", ".join(sorted({k for k in GENERIC_SOURCE_KINDS})) or "(none)"
+        raise UnknownConnectorError(f"Unknown source kind {kind!r}. Available: {available}")
+    instance = cls()
+    instance.slug = slugify(slug)
+    return instance
+
+
+def resolve_source(
+    provider_slug: str,
+    *,
+    source_config: dict[str, Any] | None = None,
+    provider_targets: dict[str, Any] | None = None,
+) -> JobSource:
+    slug = slugify(provider_slug)
+    config = dict(source_config or {})
+    targets = dict(provider_targets or {})
+    kind = config.get("kind") or targets.get("kind")
+    if kind:
+        return build_generic_source(str(kind), slug)
+    try:
+        return source_registry.get(slug)
+    except UnknownConnectorError:
+        available = ", ".join(sorted(source_registry.all())) or "(none)"
+        raise UnknownConnectorError(
+            f"Unknown source {slug!r}. Available: {available}. "
+            "Declare kind = \"jsonld\" (or another generic base) under [sources.<slug>] for config-only connectors."
+        )
+
+
+def _merge_options(
+    *,
+    source_config: dict[str, Any],
+    provider_targets: dict[str, Any],
+    detail_limit: int,
+    max_pages: int,
+    board_tokens: list[str] | None,
+    max_boards: int | None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    for key, value in {**provider_targets, **source_config}.items():
+        if key in {"kind", "role_lane"}:
+            continue
+        options[key] = value
+    options["detail_limit"] = detail_limit
+    options["max_pages"] = max_pages
+    if max_boards is not None:
+        options["max_boards"] = max_boards
+    tokens = board_tokens
+    if tokens is None:
+        tokens = source_config.get("board_tokens") or provider_targets.get("manual_board_tokens")
+    if tokens is not None:
+        options["board_tokens"] = list(tokens)
+    # HTML docs use list_selector; code uses link_selector
+    if "list_selector" in options and "link_selector" not in options:
+        options["link_selector"] = options["list_selector"]
+    return options
 
 
 def collect_provider_run(
@@ -46,6 +168,7 @@ def collect_provider_run(
     payload_out: str | Path | None = None,
     fixture_dir: str | Path | None = None,
     targets_path: str | Path | None = None,
+    config_path: str | Path | None = None,
     run_key: str | None = None,
     now: datetime | None = None,
     max_pages: int = 1,
@@ -55,29 +178,61 @@ def collect_provider_run(
 ) -> CollectionResult:
     provider_slug = slugify(provider_slug)
     targets = _load_targets(targets_path)
+    connectors = _load_jobsearch_sources(config_path=config_path)
+    source_config = dict(connectors.get(provider_slug) or {})
     metrics = FetchMetrics()
     started_at = now or utc_now()
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
-    provider_targets = targets["providers"].get(provider_slug) or {}
-    resolved_detail_limit = detail_limit if detail_limit is not None else int(provider_targets.get("default_detail_limit") or 10)
-    resolved_max_boards = max_boards if max_boards is not None else int((targets["providers"].get("greenhouse") or {}).get("default_max_boards") or 10)
+    provider_targets = dict(targets.get("providers", {}).get(provider_slug) or {})
+    if provider_targets.get("kind") and not source_config.get("kind"):
+        source_config = {**provider_targets, **source_config}
+    resolved_detail_limit = (
+        detail_limit
+        if detail_limit is not None
+        else int(
+            source_config.get("detail_limit")
+            or provider_targets.get("default_detail_limit")
+            or 10
+        )
+    )
+    resolved_max_boards = (
+        max_boards
+        if max_boards is not None
+        else int(
+            source_config.get("max_boards")
+            or (targets.get("providers", {}).get("greenhouse") or {}).get("default_max_boards")
+            or provider_targets.get("default_max_boards")
+            or 10
+        )
+    )
     fetcher = FixtureFetcher(fixture_dir, metrics) if fixture_dir else LiveFetcher(metrics)
-    source = source_registry.get(provider_slug)
-    if not source:
-        raise ValueError(f"Unsupported provider collector: {provider_slug}")
+    source = resolve_source(
+        provider_slug,
+        source_config=source_config,
+        provider_targets=provider_targets,
+    )
+    role_lane = source_config.get("role_lane") or targets.get("role_lane") or {}
+    merged_targets = dict(targets)
+    merged_targets["role_lane"] = role_lane
+    providers = dict(merged_targets.get("providers") or {})
+    providers[provider_slug] = {**provider_targets, **{k: v for k, v in source_config.items() if k != "role_lane"}}
+    merged_targets["providers"] = providers
+    options = _merge_options(
+        source_config=source_config,
+        provider_targets=provider_targets,
+        detail_limit=resolved_detail_limit,
+        max_pages=max_pages,
+        board_tokens=board_tokens,
+        max_boards=resolved_max_boards,
+    )
     ctx = CollectionContext(
         conn=conn,
         fetcher=fetcher,
-        targets=targets,
+        targets=merged_targets,
         metrics=metrics,
         provider_slug=provider_slug,
-        options={
-            "detail_limit": resolved_detail_limit,
-            "max_pages": max_pages,
-            "board_tokens": board_tokens,
-            "max_boards": resolved_max_boards,
-        },
+        options=options,
     )
     try:
         candidates, status, blockers = source.discover(ctx)
@@ -88,7 +243,7 @@ def collect_provider_run(
     if finished_at.tzinfo is None:
         finished_at = finished_at.replace(tzinfo=timezone.utc)
     run_key = normalize_space(run_key) or f"{provider_slug}-discovery-{started_at.strftime('%Y%m%dT%H%M%SZ')}"
-    lane_name = normalize_space((targets.get("role_lane") or {}).get("name")) or "target"
+    lane_name = normalize_space((role_lane or {}).get("name")) or "target"
     summary = (
         f"{provider_slug} discovered {metrics.jobs_discovered} {lane_name} jobs; "
         f"emitted {len(candidates)}, skipped {metrics.jobs_skipped_as_duplicates} duplicates, "
@@ -173,8 +328,20 @@ def benchmark_providers(
     return {"mode": "live" if live else "fixture", "results": results}
 
 
+def _load_source_entry_point(entry_point: Any) -> JobSource:
+    loaded = entry_point.load()
+    if isinstance(loaded, type):
+        instance = loaded()
+    else:
+        instance = loaded
+    if not getattr(instance, "slug", None):
+        instance.slug = entry_point.name
+    return instance
+
+
 def _register_builtin_sources() -> None:
     from jobtracker.sources.services import ashby, djinni, dou, greenhouse, lever, workua  # noqa: F401
 
 
 _register_builtin_sources()
+source_registry.load_entry_points("jobtracker.sources", entry_point_loader=_load_source_entry_point)

@@ -14,7 +14,7 @@ class ConnectorContractTests(unittest.TestCase):
     def test_all_sources_have_slug_and_health(self) -> None:
         from jobtracker.sources import services  # noqa: F401 — trigger registration
 
-        for slug, source in source_registry.items():
+        for slug, source in source_registry.all().items():
             self.assertTrue(source.slug, f"{slug} missing slug")
             ctx = _minimal_collection_ctx(slug)
             report = source.health(ctx)

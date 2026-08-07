@@ -9,11 +9,11 @@
 
 ## Adding a job source
 
-See [docs/connectors/writing-a-source.md](docs/connectors/writing-a-source.md).
+See [Docs/connectors/writing-a-source.md](Docs/connectors/writing-a-source.md).
 
 ## Adding a mail parser
 
-See [docs/connectors/writing-a-mail-connector.md](docs/connectors/writing-a-mail-connector.md).
+See [Docs/connectors/writing-a-mail-connector.md](Docs/connectors/writing-a-mail-connector.md).
 
 ## Development setup
 

@@ -98,52 +98,68 @@ class CliDryRunTests(unittest.TestCase):
         self.assertEqual(len(payload["results"]), 4)
 
     def test_prepare_jobboard_run_writes_manifest_and_payloads(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "jobtracker",
-                    "prepare-jobboard-run",
-                    "--profile",
-                    "ios",
-                    "--fixture-dir",
-                    str(self.fixture_dir),
-                    "--now",
-                    "2026-04-29T09:00:00+00:00",
-                    "--output-dir",
-                    str(root),
-                    "--no-db",
-                ],
-                cwd=Path(__file__).resolve().parent.parent,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
+        import shutil
 
-            manifest = json.loads(result.stdout)
-            self.assertEqual(manifest["profile"]["slug"], "ios")
-            self.assertEqual(manifest["providers"], ["dou", "workua", "djinni"])
-            self.assertEqual(manifest["run"]["run_key"], "ua-jobboards-2026-04-29")
-            self.assertEqual(manifest["run"]["status"], "completed")
-            self.assertEqual(manifest["db"]["status"], "skipped")
-            self.assertTrue(Path(manifest["manifest_path"]).exists())
-            self.assertEqual(
-                manifest["artifacts"]["report_path"],
-                "outputs/reports/2026-04-29-ua-jobboards-triage.md",
+        profile_dir = Path(__file__).resolve().parent.parent / "profile"
+        profile_dir.mkdir(exist_ok=True)
+        ios_toml = profile_dir / "ios.toml"
+        created_ios = False
+        if not ios_toml.exists():
+            shutil.copyfile(
+                Path(__file__).resolve().parent.parent / "profile" / "templates" / "ios.toml",
+                ios_toml,
             )
-            self.assertEqual(
-                manifest["artifacts"]["email_body_path"],
-                str(root / "2026-04-29-ua-jobboards-email-body.txt"),
-            )
-            self.assertEqual(len(manifest["provider_runs"]), 3)
-            for provider_run in manifest["provider_runs"]:
-                self.assertEqual(provider_run["run_key"], f"{provider_run['provider']}-ua-jobboards-2026-04-29")
-                self.assertGreaterEqual(provider_run["opportunities"], 1)
-                self.assertTrue(Path(provider_run["payload_path"]).exists())
-                self.assertTrue(Path(provider_run["normalized_payload_path"]).exists())
-                self.assertTrue(Path(provider_run["deduped_payload_path"]).exists())
+            created_ios = True
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "jobtracker",
+                        "prepare-jobboard-run",
+                        "--profile",
+                        "ios",
+                        "--fixture-dir",
+                        str(self.fixture_dir),
+                        "--now",
+                        "2026-04-29T09:00:00+00:00",
+                        "--output-dir",
+                        str(root),
+                        "--no-db",
+                    ],
+                    cwd=Path(__file__).resolve().parent.parent,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+
+                manifest = json.loads(result.stdout)
+                self.assertEqual(manifest["profile"]["slug"], "ios")
+                self.assertEqual(manifest["providers"], ["dou", "workua", "djinni"])
+                self.assertEqual(manifest["run"]["run_key"], "ua-jobboards-2026-04-29")
+                self.assertEqual(manifest["run"]["status"], "completed")
+                self.assertEqual(manifest["db"]["status"], "skipped")
+                self.assertTrue(Path(manifest["manifest_path"]).exists())
+                self.assertEqual(
+                    manifest["artifacts"]["report_path"],
+                    "outputs/reports/2026-04-29-ua-jobboards-triage.md",
+                )
+                self.assertEqual(
+                    manifest["artifacts"]["email_body_path"],
+                    str(root / "2026-04-29-ua-jobboards-email-body.txt"),
+                )
+                self.assertEqual(len(manifest["provider_runs"]), 3)
+                for provider_run in manifest["provider_runs"]:
+                    self.assertEqual(provider_run["run_key"], f"{provider_run['provider']}-ua-jobboards-2026-04-29")
+                    self.assertGreaterEqual(provider_run["opportunities"], 1)
+                    self.assertTrue(Path(provider_run["payload_path"]).exists())
+                    self.assertTrue(Path(provider_run["normalized_payload_path"]).exists())
+                    self.assertTrue(Path(provider_run["deduped_payload_path"]).exists())
+        finally:
+            if created_ios:
+                ios_toml.unlink(missing_ok=True)
 
     def test_validate_payload_cli_writes_normalized_payload(self) -> None:
         payload = {

@@ -28,3 +28,14 @@ webhook_url = "{{SLACK_WEBHOOK_URL}}"
 [notify.telegram]
 bot_token = "{{TELEGRAM_BOT_TOKEN}}"
 chat_id = "{{TELEGRAM_CHAT_ID}}"
+
+# Config-only sources (no Python). Add the slug to a pipeline's providers list to run.
+[sources.example_jsonld]
+kind = "jsonld"
+listing_url = "https://example.com/careers"
+detail_limit = 10
+
+[sources.example_jsonld.role_lane]
+name = "engineering"
+include_terms = ["engineer", "developer"]
+exclude_terms = ["intern", "manager"]

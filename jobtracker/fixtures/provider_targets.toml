@@ -46,3 +46,11 @@ manual_board_tokens = [
 ]
 denylist = []
 default_max_boards = 10
+
+[providers.ashby]
+manual_board_tokens = ["default"]
+default_max_boards = 10
+
+[providers.lever]
+manual_board_tokens = ["default"]
+default_max_boards = 10

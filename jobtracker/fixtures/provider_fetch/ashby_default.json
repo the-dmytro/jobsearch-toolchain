@@ -1,0 +1,36 @@
+{
+  "jobs": [
+    {
+      "id": "b1f3c0de-1111-4a2b-9c3d-000000000001",
+      "title": "Senior iOS Engineer",
+      "department": "Engineering",
+      "team": "Mobile",
+      "employmentType": "FullTime",
+      "location": "Remote — EMEA",
+      "isRemote": true,
+      "isListed": true,
+      "publishedAt": "2026-04-18T08:00:00+00:00",
+      "createdAt": "2026-04-18T08:00:00+00:00",
+      "updatedAt": "2026-04-22T08:00:00+00:00",
+      "jobUrl": "https://jobs.ashbyhq.com/default/b1f3c0de-1111-4a2b-9c3d-000000000001",
+      "applyUrl": "https://jobs.ashbyhq.com/default/b1f3c0de-1111-4a2b-9c3d-000000000001",
+      "descriptionPlain": "We are hiring a Senior iOS Engineer to own our SwiftUI checkout flow. Fully remote within EMEA."
+    },
+    {
+      "id": "b1f3c0de-2222-4a2b-9c3d-000000000002",
+      "title": "Staff Backend Engineer",
+      "department": "Engineering",
+      "team": "Platform",
+      "employmentType": "FullTime",
+      "location": "Berlin, Germany",
+      "isRemote": false,
+      "isListed": true,
+      "publishedAt": "2026-04-19T08:00:00+00:00",
+      "createdAt": "2026-04-19T08:00:00+00:00",
+      "updatedAt": "2026-04-19T08:00:00+00:00",
+      "jobUrl": "https://jobs.ashbyhq.com/default/b1f3c0de-2222-4a2b-9c3d-000000000002",
+      "applyUrl": "https://jobs.ashbyhq.com/default/b1f3c0de-2222-4a2b-9c3d-000000000002",
+      "descriptionPlain": "Own our Go services and event pipeline from the Berlin office."
+    }
+  ]
+}

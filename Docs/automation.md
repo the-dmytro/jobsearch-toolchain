@@ -16,7 +16,7 @@ Run:
 
 ```bash
 python -m jobtracker run jobboards
-python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider-fetch
+python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 ```
 
 Pipeline steps: **source → dedupe → store → notify**
@@ -36,10 +36,10 @@ Pipeline steps: **source → dedupe → store → notify**
 
 DB-first automation instructions for AI agents:
 
-- [LinkedIn triage](../Docs/playbooks/linkedin_job_triage_instruction.md)
-- [Upwork evaluator](../Docs/playbooks/UPWORK_EVALUATOR.md)
-- [UA job boards](../Docs/playbooks/UA_JOBBOARDS_TRIAGE.md)
-- [Gmail setup](../Docs/playbooks/GMAIL_JOB_EMAIL_SETUP.md)
+- [LinkedIn triage](playbooks/linkedin_job_triage_instruction.md)
+- [Upwork evaluator](playbooks/UPWORK_EVALUATOR.md)
+- [UA job boards](playbooks/UA_JOBBOARDS_TRIAGE.md)
+- [Gmail setup](playbooks/GMAIL_JOB_EMAIL_SETUP.md)
 
 Playbooks reference `profile/` files and `{{REPORT_EMAIL}}` — fill templates before use.
 
@@ -51,7 +51,7 @@ Playbooks reference `profile/` files and `{{REPORT_EMAIL}}` — fill templates b
 
 ## Payload contract
 
-All automation runs produce JSON matching [AUTOMATION_PAYLOAD_CONTRACT.md](../Docs/DB/AUTOMATION_PAYLOAD_CONTRACT.md). Validate before upsert:
+All automation runs produce JSON matching [AUTOMATION_PAYLOAD_CONTRACT.md](DB/AUTOMATION_PAYLOAD_CONTRACT.md). Validate before upsert:
 
 ```bash
 python -m jobtracker validate-payload --provider upwork --payload outputs/automation-payloads/run.payload.json

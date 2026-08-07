@@ -12,6 +12,24 @@ from .services.telegram import TelegramNotifier
 notifier_registry: Registry[Notifier] = Registry("notifier")
 
 
+def _load_notifier_entry_point(entry_point: Any) -> Notifier:
+    loaded = entry_point.load()
+    if isinstance(loaded, type):
+        return loaded()
+    return loaded
+
+
+def _register_builtin_notifiers() -> None:
+    notifier_registry.register(EmailNotifier(to=""))
+    notifier_registry.register(WebhookNotifier(url=""))
+    notifier_registry.register(SlackNotifier(webhook_url=""))
+    notifier_registry.register(TelegramNotifier(bot_token="", chat_id=""))
+
+
+_register_builtin_notifiers()
+notifier_registry.load_entry_points("jobtracker.notifiers", entry_point_loader=_load_notifier_entry_point)
+
+
 def build_notifier(slug: str, config: dict[str, Any]) -> Notifier:
     key = slug.strip().lower()
     if key == "email":
