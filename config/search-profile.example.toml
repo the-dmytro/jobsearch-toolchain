@@ -1,0 +1,17 @@
+[profile]
+slug = "example"
+name = "Example Search Profile"
+output_slug = "example-jobboards"
+targets_path = "profile/provider_targets.toml"
+report_path_template = "outputs/reports/{date}-example-triage.md"
+email_body_template = "{date}-example-email-body.txt"
+email_subject_prefix = "Example job triage"
+email_to = "{{REPORT_EMAIL}}"
+profile_files = [
+  "profile/00_PROJECT_INSTRUCTIONS.md",
+  "profile/01_PREFERENCES.md",
+]
+evaluation_notes = [
+  "Use this template as a starting point for a new search lane.",
+  "Replace placeholder profile files before running doctor or automation.",
+]

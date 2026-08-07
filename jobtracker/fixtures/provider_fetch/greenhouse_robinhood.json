@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "id": 7794027,
+      "internal_job_id": 7711,
+      "absolute_url": "https://job-boards.greenhouse.io/robinhood/jobs/7794027",
+      "location": {"name": "Toronto, ON"},
+      "updated_at": "2026-04-29T08:00:00-04:00",
+      "requisition_id": "REQ-IO-2",
+      "title": "iOS Engineer",
+      "company_name": "Robinhood",
+      "first_published": "2026-04-25T08:00:00-04:00",
+      "content": "<p>iOS role for the investing app.</p>",
+      "departments": [{"name": "Engineering"}],
+      "offices": [{"name": "Toronto"}]
+    }
+  ],
+  "meta": {"total": 1}
+}

@@ -1,0 +1,31 @@
+[project]
+name = "jobsearch-tracker"
+version = "0.1.0"
+description = "Supabase-backed job search and freelance project tracking tools."
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "httpx>=0.28",
+  "psycopg[binary]>=3.2",
+  "pypdf>=6.0",
+  "python-dateutil>=2.9",
+  "python-dotenv>=1.0",
+  "supabase>=2.0",
+  "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.scripts]
+jobtracker = "jobtracker.cli:main"
+
+# Connector plugin groups — populated as built-in connectors land in later work packages.
+[project.entry-points."jobtracker.sources"]
+
+[project.entry-points."jobtracker.mail.parsers"]
+
+[project.entry-points."jobtracker.stores"]
+
+[project.entry-points."jobtracker.notifiers"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jobtracker*"]

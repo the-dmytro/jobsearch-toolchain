@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+current_branch="$(git rev-parse --abbrev-ref HEAD)"
+remote="${1:-}"
+remote_url="${2:-}"
+
+# Block pushing personal branch to public origin
+if [[ "$current_branch" == "personal" && "$remote" == "origin" ]]; then
+  echo "ERROR: Refusing to push 'personal' branch to public remote 'origin'." >&2
+  echo "Use 'private' remote for personal data, or merge into main first." >&2
+  exit 1
+fi
+
+# Also block if remote URL looks like the public repo
+if [[ "$current_branch" == "personal" && "$remote_url" == *"jobsearch-toolchain"* ]]; then
+  echo "ERROR: Refusing to push 'personal' branch to jobsearch-toolchain." >&2
+  exit 1
+fi
+
+exit 0
