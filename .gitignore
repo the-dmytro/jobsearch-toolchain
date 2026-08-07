@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.pii-denylist.txt
+
+# Personal data (tracked on `personal` branch via git add -f)
+/profile/
+/Docs/Tracking/
+/outputs/
+
+__pycache__/
+*.py[cod]
+.venv/
+
+# Next.js CRM
+crm/.next/
+crm/node_modules/
+crm/.env.local
+crm/.env*.local
+!crm/.env.example

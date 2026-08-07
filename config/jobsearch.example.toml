@@ -1,0 +1,30 @@
+[paths]
+config_dir = "config"
+profile_dir = "profile"
+output_dir = "outputs/automation-payloads"
+payload_dir = "outputs/automation-payloads"
+
+[pipelines.jobboards]
+type = "jobboard"
+profile = "ios"
+providers = ["dou", "workua", "djinni"]
+include_db = true
+max_pages = 1
+
+[pipelines.jobboards.notify]
+channels = ["email"]
+
+[notify.email]
+to = "{{REPORT_EMAIL}}"
+from = "{{SMTP_FROM}}"
+subject_template = "{subject} — {run_key}"
+
+[notify.webhook]
+url = "{{WEBHOOK_URL}}"
+
+[notify.slack]
+webhook_url = "{{SLACK_WEBHOOK_URL}}"
+
+[notify.telegram]
+bot_token = "{{TELEGRAM_BOT_TOKEN}}"
+chat_id = "{{TELEGRAM_CHAT_ID}}"

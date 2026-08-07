@@ -1,0 +1,33 @@
+{
+  "jobs": [
+    {
+      "id": 4024449009,
+      "internal_job_id": 9981,
+      "absolute_url": "https://job-boards.greenhouse.io/oura/jobs/4024449009",
+      "location": {"name": "Remote, Europe"},
+      "updated_at": "2026-04-29T08:00:00-04:00",
+      "requisition_id": "REQ-IO-1",
+      "title": "Senior iOS Engineer",
+      "company_name": "Ōura",
+      "first_published": "2026-04-28T08:00:00-04:00",
+      "content": "<p>SwiftUI and UIKit role for the mobile product team.</p>",
+      "departments": [{"name": "Engineering"}],
+      "offices": [{"name": "Remote"}]
+    },
+    {
+      "id": 4024449010,
+      "internal_job_id": 9982,
+      "absolute_url": "https://job-boards.greenhouse.io/oura/jobs/4024449010",
+      "location": {"name": "Remote, Europe"},
+      "updated_at": "2026-04-29T08:00:00-04:00",
+      "requisition_id": "REQ-AN-1",
+      "title": "Senior Android Engineer",
+      "company_name": "Ōura",
+      "first_published": "2026-04-28T08:00:00-04:00",
+      "content": "<p>Android role.</p>",
+      "departments": [{"name": "Engineering"}],
+      "offices": [{"name": "Remote"}]
+    }
+  ],
+  "meta": {"total": 2}
+}

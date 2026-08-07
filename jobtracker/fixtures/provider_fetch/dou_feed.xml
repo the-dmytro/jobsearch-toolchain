@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>DOU iOS/macOS jobs</title>
+    <item>
+      <title>Senior iOS Engineer</title>
+      <link>https://jobs.dou.ua/companies/acme/vacancies/123456/?utm_source=jobsrss</link>
+      <description><![CDATA[<p>SwiftUI product work. Remote-first team in EU.</p>]]></description>
+      <pubDate>Tue, 29 Apr 2026 08:00:00 +0000</pubDate>
+      <guid>dou-123456</guid>
+    </item>
+    <item>
+      <title>Senior Android Engineer</title>
+      <link>https://jobs.dou.ua/companies/acme/vacancies/123457/?utm_source=jobsrss</link>
+      <description><![CDATA[<p>Android role.</p>]]></description>
+      <pubDate>Tue, 29 Apr 2026 09:00:00 +0000</pubDate>
+      <guid>dou-123457</guid>
+    </item>
+  </channel>
+</rss>
