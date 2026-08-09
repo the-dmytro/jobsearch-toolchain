@@ -10,8 +10,9 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from jobtracker.core.connectors import ConnectorSpec
 from jobtracker.core.errors import UnknownConnectorError
-from jobtracker.core.models import CollectionContext, CollectionResult, FetchMetrics
+from jobtracker.core.models import CollectionContext, CollectionResult, ConnectorBuildContext, FetchMetrics
 from jobtracker.core.registry import Registry
 from jobtracker.payloads import upsert_run_payload
 from jobtracker.sources.base import JobSource
@@ -23,6 +24,7 @@ from jobtracker.sources.generic.rss import RssSource
 from jobtracker.sources.generic.sitemap import SitemapSource
 from jobtracker.sources.shared.fetch import FIXTURE_ROOT, FixtureFetcher, LiveFetcher
 from jobtracker.sources.shared.payload import _build_payload, _json, _payload_path, _write_payload
+from jobtracker.store.base import JobStore
 from jobtracker.utils import normalize_space, slugify, utc_now
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +33,7 @@ _FIXTURE_TARGETS = Path(__file__).resolve().parents[1] / "fixtures" / "provider_
 TARGETS_PATH = _PROFILE_TARGETS if _PROFILE_TARGETS.exists() else _FIXTURE_TARGETS
 DEFAULT_JOBSEARCH_CONFIG = _REPO_ROOT / "config" / "jobsearch.toml"
 
-source_registry: Registry[JobSource] = Registry("source")
+source_registry: Registry[Any] = Registry("source")
 
 GENERIC_SOURCE_KINDS: dict[str, type] = {
     "rss": RssSource,
@@ -52,8 +54,15 @@ def register_source(cls: T) -> T:
     return cls
 
 
-def _load_targets(path: str | Path | None = None) -> dict[str, Any]:
-    target_path = Path(path or os.getenv("JOBTRACKER_PROVIDER_TARGETS") or TARGETS_PATH)
+def _load_targets(path: str | Path | None = None, *, root: Path | None = None) -> dict[str, Any]:
+    selected = path or os.getenv("JOBTRACKER_PROVIDER_TARGETS")
+    if selected:
+        target_path = Path(selected)
+        if root and not target_path.is_absolute():
+            target_path = root / target_path
+    else:
+        rooted = (root / "profile/provider_targets.toml") if root else None
+        target_path = rooted if rooted and rooted.exists() else TARGETS_PATH
     return tomllib.loads(target_path.read_text(encoding="utf-8"))
 
 
@@ -114,6 +123,7 @@ def resolve_source(
     *,
     source_config: dict[str, Any] | None = None,
     provider_targets: dict[str, Any] | None = None,
+    root: Path | None = None,
 ) -> JobSource:
     slug = slugify(provider_slug)
     config = dict(source_config or {})
@@ -122,12 +132,23 @@ def resolve_source(
     if kind:
         return build_generic_source(str(kind), slug)
     try:
-        return source_registry.get(slug)
+        item = source_registry.get(slug)
+        if isinstance(item, ConnectorSpec):
+            context = ConnectorBuildContext(
+                root=root or _REPO_ROOT,
+                slug=slug,
+                options={**targets, **config},
+            )
+            instance = item.build(context)
+            if not getattr(instance, "slug", None):
+                instance.slug = slug
+            return instance
+        return item
     except UnknownConnectorError:
         available = ", ".join(sorted(source_registry.all())) or "(none)"
         raise UnknownConnectorError(
             f"Unknown source {slug!r}. Available: {available}. "
-            "Declare kind = \"jsonld\" (or another generic base) under [sources.<slug>] for config-only connectors."
+            'Declare kind = "jsonld" (or another generic base) under [sources.<slug>] for config-only connectors.'
         )
 
 
@@ -175,10 +196,13 @@ def collect_provider_run(
     detail_limit: int | None = None,
     board_tokens: list[str] | None = None,
     max_boards: int | None = None,
+    root: str | Path | None = None,
+    store: JobStore | None = None,
 ) -> CollectionResult:
     provider_slug = slugify(provider_slug)
-    targets = _load_targets(targets_path)
-    connectors = _load_jobsearch_sources(config_path=config_path)
+    project_root = Path(root) if root else None
+    targets = _load_targets(targets_path, root=project_root)
+    connectors = _load_jobsearch_sources(config_path=config_path, root=project_root)
     source_config = dict(connectors.get(provider_slug) or {})
     metrics = FetchMetrics()
     started_at = now or utc_now()
@@ -190,11 +214,7 @@ def collect_provider_run(
     resolved_detail_limit = (
         detail_limit
         if detail_limit is not None
-        else int(
-            source_config.get("detail_limit")
-            or provider_targets.get("default_detail_limit")
-            or 10
-        )
+        else int(source_config.get("detail_limit") or provider_targets.get("default_detail_limit") or 10)
     )
     resolved_max_boards = (
         max_boards
@@ -211,12 +231,16 @@ def collect_provider_run(
         provider_slug,
         source_config=source_config,
         provider_targets=provider_targets,
+        root=project_root,
     )
     role_lane = source_config.get("role_lane") or targets.get("role_lane") or {}
     merged_targets = dict(targets)
     merged_targets["role_lane"] = role_lane
     providers = dict(merged_targets.get("providers") or {})
-    providers[provider_slug] = {**provider_targets, **{k: v for k, v in source_config.items() if k != "role_lane"}}
+    providers[provider_slug] = {
+        **provider_targets,
+        **{k: v for k, v in source_config.items() if k != "role_lane"},
+    }
     merged_targets["providers"] = providers
     options = _merge_options(
         source_config=source_config,
@@ -251,10 +275,14 @@ def collect_provider_run(
     )
     if blockers:
         summary += f" Blockers: {' | '.join(blockers)}"
-    payload = _build_payload(provider_slug, run_key, started_at, finished_at, status, summary, blockers, metrics, candidates)
+    payload = _build_payload(
+        provider_slug, run_key, started_at, finished_at, status, summary, blockers, metrics, candidates
+    )
     metrics.payload_size_bytes = len(_json(payload).encode("utf-8"))
     payload["run"]["metrics"] = metrics.to_dict(status)
-    output_path = _payload_path(provider_slug, run_key, payload_out if dry_run and payload_out else payload_out)
+    output_path = _payload_path(
+        provider_slug, run_key, payload_out if dry_run and payload_out else payload_out
+    )
     if not dry_run or payload_out:
         output_path = _write_payload(output_path, payload)
     else:
@@ -265,7 +293,11 @@ def collect_provider_run(
     if not dry_run:
         if not output_path:
             output_path = _write_payload(_payload_path(provider_slug, run_key, None), payload)
-        persisted_result = upsert_run_payload(conn, provider_slug, output_path)
+        if store is not None:
+            result = store.upsert_run_payload(provider_slug, str(output_path))
+            persisted_result = vars(result)
+        else:
+            persisted_result = upsert_run_payload(conn, provider_slug, output_path)
         persisted = True
 
     return CollectionResult(
@@ -328,15 +360,8 @@ def benchmark_providers(
     return {"mode": "live" if live else "fixture", "results": results}
 
 
-def _load_source_entry_point(entry_point: Any) -> JobSource:
-    loaded = entry_point.load()
-    if isinstance(loaded, type):
-        instance = loaded()
-    else:
-        instance = loaded
-    if not getattr(instance, "slug", None):
-        instance.slug = entry_point.name
-    return instance
+def _load_source_entry_point(entry_point: Any) -> ConnectorSpec:
+    return ConnectorSpec(slug=entry_point.name, loaded=entry_point.load())
 
 
 def _register_builtin_sources() -> None:

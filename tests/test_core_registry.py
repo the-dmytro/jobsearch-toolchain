@@ -58,7 +58,9 @@ class RegistryTests(unittest.TestCase):
         self.assertIs(self.registry.get("plugin"), plugin)
 
     @patch("jobtracker.core.registry._iter_entry_points")
-    def test_in_tree_registration_takes_precedence_over_entry_points(self, iter_entry_points: MagicMock) -> None:
+    def test_in_tree_registration_takes_precedence_over_entry_points(
+        self, iter_entry_points: MagicMock
+    ) -> None:
         builtin = _BuiltinConnector()
         self.registry.register(builtin)
 

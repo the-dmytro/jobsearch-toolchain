@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 from ...config import load_settings
-from ..base import ArtifactRef, ArtifactStore
+from ..base import ArtifactRef
 from .local import file_sha256
 
 
@@ -40,7 +39,7 @@ class SupabaseArtifactStore:
             from supabase import create_client
         except ImportError as exc:
             raise RuntimeError(
-                "supabase is required for Storage upload. Install dependencies with `python3 -m pip install -r requirements.txt`."
+                "supabase is required for Storage upload. Install it with `python3 -m pip install -e '.[supabase]'`."
             ) from exc
 
         client = create_client(settings.supabase_url, api_key)

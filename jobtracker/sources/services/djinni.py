@@ -34,7 +34,9 @@ def _djinni_external_id(url: str | None, identifier: str | None = None) -> str |
     return match.group(1) if match else None
 
 
-def _parse_djinni_listing(listing_html: str, lane: dict[str, Any], metrics: Any) -> tuple[list[Candidate], str | None]:
+def _parse_djinni_listing(
+    listing_html: str, lane: dict[str, Any], metrics: Any
+) -> tuple[list[Candidate], str | None]:
     jobs = _parse_json_ld_jobs(listing_html)
     if not jobs:
         return [], "Djinni listing did not expose JobPosting JSON-LD."
@@ -99,7 +101,8 @@ def _enrich_djinni(candidate: Candidate, detail_html: str) -> Candidate:
         title=title or candidate.title,
         company=company or candidate.company,
         work_model=_infer_work_model(job.get("jobLocationType"), description) or candidate.work_model,
-        engagement_type=_infer_engagement_type(job.get("employmentType"), description) or candidate.engagement_type,
+        engagement_type=_infer_engagement_type(job.get("employmentType"), description)
+        or candidate.engagement_type,
         seniority=_infer_seniority(title) or candidate.seniority,
         compensation_text=_find_money_text(description) or candidate.compensation_text,
         summary=_excerpt(description) or candidate.summary,

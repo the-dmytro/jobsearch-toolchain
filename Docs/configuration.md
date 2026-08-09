@@ -1,85 +1,66 @@
 # Configuration
 
-## Layered config
+`config/jobsearch.example.toml` is the public v1 example. `jobtracker init` copies it to ignored `config/jobsearch.toml` and copies the neutral profile scaffold to ignored `profile/`. An optional ignored `config/jobsearch.local.toml` overlays the main file.
 
-| File | Purpose |
-|------|---------|
-| `config/jobsearch.toml` | Main config: identity, connectors, mail, store, pipelines |
-| `config/jobsearch.local.toml` | Optional overrides (gitignored) |
-| `profile/*.toml` | Search profiles (role lanes, source targets) |
-| `.env` | Secrets: database URL, API keys, mail passwords |
+Relative paths are always resolved from `--root` or the selected project root, never from the shell's current directory.
 
-## jobsearch.toml structure
+## Supported sections
+
+- `schema_version = 1`
+- `[paths]`
+- `[store]`
+- `[sources.<slug>]`
+- `[mail]`
+- `[notify.<slug>]`
+- `[pipelines.<name>]`
+
+Machine-readable rules are in [`schemas/jobsearch-config.v1.schema.json`](../schemas/jobsearch-config.v1.schema.json). Configs without `schema_version` remain readable with a deprecation warning through v0.2.
+
+## Local-first store
 
 ```toml
-[identity]
-owner_name = "Your Name"
-report_email = "jobs@example.com"
-
 [store]
-backend = "postgres"          # postgres | sqlite | memory
-artifact_backend = "local"    # local | s3 | supabase-storage
+backend = "sqlite"
+sqlite_path = "outputs/jobsearch.sqlite3"
+artifact_backend = "local"
+artifact_local_path = "outputs/artifacts"
+```
 
-[mail.inbox]
-kind = "imap"
-host = "imap.example.com"
-user = "you@example.com"
-# password via JOBTRACKER_IMAP_PASSWORD in .env
+PostgreSQL is opt-in and reads its connection string from `JOBTRACKER_DATABASE_URL` in ignored `.env`.
 
-[mail.outbox]
-kind = "smtp"
-host = "smtp.example.com"
-port = 465
+## Pipeline
 
-[[pipelines]]
-name = "jobboards"
-profile = "ios"
-sources = ["dou", "workua", "djinni"]
-notify = ["email"]
+```toml
+[pipelines.jobboards]
+type = "jobboard"
+profile = "generic"
+providers = ["example_jsonld"]
+include_db = true
+max_pages = 1
+```
 
-[sources.example_board]
+Profile facts and provider targets live in ignored `profile/` files created from `profile/templates/generic/`.
+
+## Config-only source
+
+```toml
+[sources.example_jsonld]
 kind = "jsonld"
-listing_url = "https://example.com/careers"
+listing_url = "https://careers.example.invalid/jobs"
 detail_limit = 10
 ```
 
-## Search profiles
+Fetch it with `jobtracker fetch-source example_jsonld`. See [connector guides](connectors/README.md) for in-tree and plugin alternatives.
 
-`profile/ios.toml` (created from `config/search-profile.example.toml`):
+## Secrets
 
-```toml
-[role_lane]
-name = "iOS/macOS"
-include_terms = ["ios", "swift", "swiftui"]
-exclude_terms = ["android", "flutter", "qa"]
+TOML stores non-secret choices only. Database URLs, mail passwords, API tokens, notification tokens, and storage keys belong in ignored `.env` using variables documented in `.env.example`.
 
-[providers.dou]
-feed_url = "https://jobs.dou.ua/vacancies/feeds/?category=iOS%2FmacOS"
-default_detail_limit = 10
-```
-
-## Environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JOBTRACKER_DATABASE_URL` | For DB writes | Postgres connection string |
-| `SUPABASE_DB_URL` | Fallback | Deprecated; use above |
-| `JOBTRACKER_IMAP_PASSWORD` | For mail fetch | IMAP app password |
-| `JOBTRACKER_SMTP_*` | For reports | SMTP credentials |
-| `JOBTRACKER_REPORT_EMAIL_TO` | For reports | Default report recipient |
-| `CRM_OWNER_EMAIL` | For CRM | Comma-separated allowlist |
-
-## Connector selection
-
-Enable sources in `config/jobsearch.toml` or pass `--targets profile/ios.toml` to CLI commands.
-
-Service-specific connectors (`dou`, `greenhouse`, `upwork`, etc.) ship enabled by default. Generic connectors need a `kind` field.
-
-## Doctor checks
+## Validation
 
 ```bash
-python -m jobtracker doctor           # full check
-python -m jobtracker doctor --skip-network   # offline validation only
+.venv/bin/python -m jobtracker doctor --skip-network
+.venv/bin/python -m jobtracker doctor
 ```
 
-Validates: TOML schema, unfilled `{{PLACEHOLDER}}` tokens, connector `health()`, database reachability.
+Offline doctor validates only configured local components and profile readiness. The full check adds network checks only for configured connectors.

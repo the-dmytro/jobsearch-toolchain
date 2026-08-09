@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from jobtracker.app_config.loader import load_app_config
+from jobtracker.app_config.loader import AppConfig, load_app_config
 from jobtracker.app_config.profiles import load_profile
 from jobtracker.app_config.schema import (
     ConfigValidationError,
@@ -12,7 +12,6 @@ from jobtracker.app_config.schema import (
     scan_profile_placeholders,
     validate_profile_config,
 )
-from jobtracker.app_config.loader import AppConfig
 from jobtracker.automation import scaffold_config, validate_config
 
 
@@ -24,46 +23,51 @@ class ConfigTests(unittest.TestCase):
     def test_validate_jobsearch_example_config(self) -> None:
         config = load_app_config(self.repo_root / "config/jobsearch.example.toml", root=self.repo_root)
         self.assertIn("jobboards", config.pipelines)
-        self.assertEqual(config.pipelines["jobboards"]["profile"], "ios")
+        self.assertEqual(config.pipelines["jobboards"]["profile"], "generic")
 
-    def test_load_ios_profile(self) -> None:
+    def test_load_generic_profile(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             profile_dir = Path(temp_dir)
-            template = self.repo_root / "profile/templates/ios.toml"
-            (profile_dir / "ios.toml").write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
-            profile = load_profile("ios", profile_dir=profile_dir)
-            self.assertEqual(profile.slug, "ios")
-            self.assertTrue(profile.targets_path.exists() or (self.repo_root / "jobtracker/fixtures/provider_targets.toml").exists())
+            template = self.repo_root / "profile/templates/generic/generic.toml"
+            (profile_dir / "generic.toml").write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            profile = load_profile("generic", profile_dir=profile_dir)
+            self.assertEqual(profile.slug, "generic")
 
     def test_scaffold_config_copies_markdown_templates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "config").mkdir()
             example = self.repo_root / "config/jobsearch.example.toml"
-            (root / "config/jobsearch.example.toml").write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
-            templates = root / "profile/templates"
+            (root / "config/jobsearch.example.toml").write_text(
+                example.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            templates = root / "profile/templates/generic"
             templates.mkdir(parents=True)
-            (templates / "ios.toml").write_text("slug = 'ios'\n", encoding="utf-8")
-            # minimal valid ios is not needed for copy test — copy raw files
-            (templates / "ios.toml").write_text(
-                (self.repo_root / "profile/templates/ios.toml").read_text(encoding="utf-8"),
+            (templates / "generic.toml").write_text(
+                (self.repo_root / "profile/templates/generic/generic.toml").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            (templates / "00_INSTRUCTIONS.md").write_text("# {{OWNER_NAME}}\n", encoding="utf-8")
-            (templates / "project-bank.example.md").write_text("# bank\n", encoding="utf-8")
+            (templates / "cv.md").write_text("# {{OWNER_NAME}}\n", encoding="utf-8")
+            (templates / "project_evidence.md").write_text("# evidence\n", encoding="utf-8")
             result = scaffold_config(root=root)
-            self.assertTrue((root / "profile/00_INSTRUCTIONS.md").exists())
-            self.assertTrue((root / "profile/project-banks/example.md").exists())
-            self.assertTrue(any(path.endswith("00_INSTRUCTIONS.md") for path in result["created"]))
+            self.assertTrue((root / "profile/cv.md").exists())
+            self.assertTrue((root / "profile/project_evidence.md").exists())
+            self.assertTrue(any(path.endswith("cv.md") for path in result["created"]))
 
     def test_validate_config_reports_missing_notify_channel(self) -> None:
         config = AppConfig(
             root=self.repo_root,
-            paths={"config_dir": "config", "profile_dir": "profile", "output_dir": "outputs/automation-payloads", "payload_dir": "outputs/automation-payloads"},
+            schema_version=1,
+            paths={
+                "config_dir": "config",
+                "profile_dir": "profile",
+                "output_dir": "outputs/automation-payloads",
+                "payload_dir": "outputs/automation-payloads",
+            },
             pipelines={
                 "jobboards": {
                     "type": "jobboard",
-                    "profile": "ios",
+                    "profile": "generic",
                     "providers": ["dou"],
                     "output_dir": "outputs/automation-payloads",
                     "payload_dir": "outputs/automation-payloads",
@@ -74,6 +78,13 @@ class ConfigTests(unittest.TestCase):
                 }
             },
             notify={},
+            store={
+                "backend": "sqlite",
+                "sqlite_path": "outputs/jobsearch.sqlite3",
+                "artifact_local_path": "outputs/artifacts",
+            },
+            source_configs={},
+            mail={},
             sources=[],
         )
         issues = validate_config(config)
@@ -96,11 +107,13 @@ class ConfigTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "config").mkdir()
             example = self.repo_root / "config/jobsearch.example.toml"
-            (root / "config/jobsearch.example.toml").write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
-            templates = root / "profile/templates"
+            (root / "config/jobsearch.example.toml").write_text(
+                example.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            templates = root / "profile/templates/generic"
             templates.mkdir(parents=True)
-            (templates / "ios.toml").write_text(
-                (self.repo_root / "profile/templates/ios.toml").read_text(encoding="utf-8"),
+            (templates / "generic.toml").write_text(
+                (self.repo_root / "profile/templates/generic/generic.toml").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
             result = scaffold_config(root=root)

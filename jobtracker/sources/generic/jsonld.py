@@ -48,14 +48,16 @@ class JsonLdSource:
                             title=title,
                             source_url=source_url,
                             apply_url=source_url,
-                            company=normalize_space(((item.get("hiringOrganization") or {}).get("name"))) or None,
+                            company=normalize_space(((item.get("hiringOrganization") or {}).get("name")))
+                            or None,
                             work_model=_infer_work_model(item.get("jobLocationType"), description),
                             engagement_type=_infer_engagement_type(item.get("employmentType"), description),
                             seniority=_infer_seniority(title),
                             summary=_excerpt(description),
                             description=description or None,
                             first_seen_at=_optional_iso(item.get("datePosted")),
-                            last_seen_at=_optional_iso(item.get("validThrough")) or _optional_iso(item.get("datePosted")),
+                            last_seen_at=_optional_iso(item.get("validThrough"))
+                            or _optional_iso(item.get("datePosted")),
                             metadata={"provider": self.slug, "json_ld": item},
                         )
                     )

@@ -7,7 +7,6 @@ from typing import Any
 
 from .utils import normalize_space, slugify
 
-
 _UPWORK_URL_RE = re.compile(r"/jobs/\~?([A-Za-z0-9]+)")
 _LINKEDIN_URL_RE = re.compile(r"/jobs/view/(\d+)")
 
@@ -29,8 +28,12 @@ class ValidationResult:
             "warnings": self.warnings,
             "normalized": self.normalized,
             "summary": {
-                "source_items": len(self.normalized.get("source_items") or self.normalized.get("emails") or []),
-                "opportunities": len(self.normalized.get("opportunities") or self.normalized.get("jobs") or []),
+                "source_items": len(
+                    self.normalized.get("source_items") or self.normalized.get("emails") or []
+                ),
+                "opportunities": len(
+                    self.normalized.get("opportunities") or self.normalized.get("jobs") or []
+                ),
             },
         }
 
@@ -74,6 +77,11 @@ def validate_payload(payload: dict[str, Any], provider: str) -> ValidationResult
     source_items = normalized.get("source_items")
     if source_items is None and isinstance(normalized.get("emails"), list):
         source_items = normalized.get("emails")
+        normalized["source_items"] = source_items
+        warnings.append("legacy top-level 'emails' was read as canonical 'source_items'")
+    if source_items is None:
+        source_items = []
+        normalized["source_items"] = source_items
     if source_items is not None and not isinstance(source_items, list):
         errors.append("source_items must be a list when present")
         source_items = []
@@ -82,7 +90,9 @@ def validate_payload(payload: dict[str, Any], provider: str) -> ValidationResult
         if not isinstance(source, dict):
             errors.append(f"source_items[{index}] must be an object")
             continue
-        external_id = normalize_space(source.get("external_id") or source.get("message_id") or source.get("id"))
+        external_id = normalize_space(
+            source.get("external_id") or source.get("message_id") or source.get("id")
+        )
         if external_id:
             source_refs.add(external_id)
         else:
@@ -94,6 +104,7 @@ def validate_payload(payload: dict[str, Any], provider: str) -> ValidationResult
     if opportunities is None and isinstance(normalized.get("jobs"), list):
         opportunities = normalized.get("jobs")
         normalized["opportunities"] = opportunities
+        warnings.append("legacy top-level 'jobs' was read as canonical 'opportunities'")
     if opportunities is None:
         opportunities = []
         normalized["opportunities"] = opportunities
@@ -105,22 +116,33 @@ def validate_payload(payload: dict[str, Any], provider: str) -> ValidationResult
         if not isinstance(opportunity, dict):
             errors.append(f"opportunities[{index}] must be an object")
             continue
-        title = normalize_space(opportunity.get("title") or opportunity.get("role_title") or opportunity.get("job_title"))
+        title = normalize_space(
+            opportunity.get("title") or opportunity.get("role_title") or opportunity.get("job_title")
+        )
         if not title:
             errors.append(f"opportunities[{index}].title is required")
-        external_id = normalize_provider_external_id(provider, opportunity.get("external_id") or opportunity.get("provider_external_id"))
+        external_id = normalize_provider_external_id(
+            provider, opportunity.get("external_id") or opportunity.get("provider_external_id")
+        )
         if not external_id:
-            external_id = normalize_provider_external_id(provider, opportunity.get("source_url") or opportunity.get("job_url") or opportunity.get("url"))
+            external_id = normalize_provider_external_id(
+                provider,
+                opportunity.get("source_url") or opportunity.get("job_url") or opportunity.get("url"),
+            )
         if external_id:
             opportunity["external_id"] = external_id
         else:
             errors.append(f"opportunities[{index}] needs external_id or source_url")
-        source_url = normalize_space(opportunity.get("source_url") or opportunity.get("job_url") or opportunity.get("url"))
+        source_url = normalize_space(
+            opportunity.get("source_url") or opportunity.get("job_url") or opportunity.get("url")
+        )
         if source_url and not opportunity.get("source_url"):
             opportunity["source_url"] = source_url
         for source_ref in opportunity.get("source_items") or []:
             if isinstance(source_ref, str) and source_refs and source_ref not in source_refs:
-                warnings.append(f"opportunities[{index}].source_items references unknown source item: {source_ref}")
+                warnings.append(
+                    f"opportunities[{index}].source_items references unknown source item: {source_ref}"
+                )
         evaluation = opportunity.get("evaluation")
         if evaluation is not None and not isinstance(evaluation, dict):
             warnings.append(f"opportunities[{index}].evaluation should be an object")

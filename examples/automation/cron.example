@@ -1,2 +1,2 @@
-# Run jobboard pipeline daily at 08:00 local time.
-0 8 * * * cd /path/to/JobSearch && /usr/bin/python3 -m jobtracker run jobboards >> outputs/logs/jobboards.cron.log 2>&1
+# Choose a cadence during onboarding; this line is intentionally disabled.
+# <cron-expression> cd /path/to/jobsearch-toolchain && .venv/bin/python -m jobtracker run <pipeline-name>

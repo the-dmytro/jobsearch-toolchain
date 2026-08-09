@@ -1,0 +1,7 @@
+[role_lane]
+name = "configured-role-lane"
+include_terms = ["engineer", "developer"]
+exclude_terms = ["intern"]
+
+[providers.example_jsonld]
+default_detail_limit = 10

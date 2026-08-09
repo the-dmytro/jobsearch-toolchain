@@ -8,9 +8,9 @@ from jobtracker.sources.shared.fetch import (
     DEFAULT_RETRIES,
     DEFAULT_TIMEOUT_SECONDS,
     FIXTURE_ROOT,
+    USER_AGENT,
     FixtureFetcher,
     LiveFetcher,
-    USER_AGENT,
 )
 from jobtracker.sources.shared.infer import _matches_lane
 from jobtracker.sources.shared.payload import DEFAULT_OUTPUT_DIR

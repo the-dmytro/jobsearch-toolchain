@@ -123,7 +123,9 @@ def _enrich_dou(candidate: Candidate, detail_html: str) -> Candidate:
         work_model=_infer_work_model(header_text, description) or candidate.work_model,
         engagement_type=_infer_engagement_type(header_text, description) or candidate.engagement_type,
         seniority=_infer_seniority(title) or candidate.seniority,
-        compensation_text=_find_money_text(header_text) or _find_money_text(description) or candidate.compensation_text,
+        compensation_text=_find_money_text(header_text)
+        or _find_money_text(description)
+        or candidate.compensation_text,
         summary=_excerpt(description) or candidate.summary,
         description=description or candidate.description,
         metadata={**candidate.metadata, "provider": "dou", "header_text": header_text},
@@ -159,7 +161,9 @@ class DouSource:
             listing_urls = provider_targets.get("listing_urls") or [provider_targets.get("listing_url")]
             for listing_url in [url for url in listing_urls if url]:
                 try:
-                    for candidate in _parse_dou_listing(ctx.fetcher.get_text(listing_url, "list"), lane, metrics):
+                    for candidate in _parse_dou_listing(
+                        ctx.fetcher.get_text(listing_url, "list"), lane, metrics
+                    ):
                         if candidate.external_id in seen:
                             continue
                         seen.add(candidate.external_id)

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/the-dmytro/jobsearch-toolchain/schemas/jobsearch-config.v1.schema.json",
+  "title": "JobSearch configuration v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "config_dir": { "type": "string", "minLength": 1 },
+        "profile_dir": { "type": "string", "minLength": 1 },
+        "output_dir": { "type": "string", "minLength": 1 },
+        "payload_dir": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "store": {
+      "type": "object",
+      "properties": {
+        "backend": { "type": "string", "minLength": 1, "default": "sqlite" },
+        "sqlite_path": { "type": "string", "minLength": 1, "default": "outputs/jobsearch.sqlite3" },
+        "artifact_backend": { "type": "string", "minLength": 1, "default": "local" },
+        "artifact_local_path": { "type": "string", "minLength": 1, "default": "outputs/artifacts" }
+      },
+      "additionalProperties": true
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "role_lane": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "include_terms": { "type": "array", "items": { "type": "string" } },
+              "exclude_terms": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "mail": {
+      "type": "object",
+      "properties": {
+        "inbox": { "$ref": "#/$defs/connectorConfig" },
+        "outbox": { "$ref": "#/$defs/connectorConfig" },
+        "parsers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/connectorConfig" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "notify": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/connectorConfig" }
+    },
+    "pipelines": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "profile", "providers"],
+        "properties": {
+          "type": { "const": "jobboard" },
+          "profile": { "type": "string", "minLength": 1 },
+          "providers": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "include_db": { "type": "boolean" },
+          "max_pages": { "type": "integer", "minimum": 1 },
+          "detail_limit": { "type": "integer", "minimum": 0 },
+          "output_dir": { "type": "string", "minLength": 1 },
+          "payload_dir": { "type": "string", "minLength": 1 },
+          "notify": {
+            "type": "object",
+            "properties": {
+              "channels": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "store", "pipelines"],
+  "additionalProperties": false,
+  "$defs": {
+    "connectorConfig": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

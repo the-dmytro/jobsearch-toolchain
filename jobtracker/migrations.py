@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "db" / "migrations"
 
 
@@ -48,4 +47,3 @@ def apply_migrations(conn: Any, dry_run: bool = False) -> list[str]:
                 )
             applied_now.append(path.name)
     return applied_now
-

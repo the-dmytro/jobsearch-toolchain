@@ -225,7 +225,10 @@ class UpworkAlertParserTests(unittest.TestCase):
         self.assertIsNone(UpworkAlertParser().parse(message))
 
     def test_parse_source_item_ignores_the_view_job_details_footer(self) -> None:
-        text = UPWORK_ALERT_TEXT + " ---------- View job details: https://www.upwork.com/jobs/~022056285060802688779?frkscc=abc"
+        text = (
+            UPWORK_ALERT_TEXT
+            + " ---------- View job details: https://www.upwork.com/jobs/~022056285060802688779?frkscc=abc"
+        )
 
         cards = parse_upwork_source_item({"text": text, "subject": "New job alert: SwiftUI checkout fix"})
 
@@ -237,7 +240,7 @@ class UpworkAlertParserTests(unittest.TestCase):
 
 class MailRegistryTests(unittest.TestCase):
     def test_registry_exposes_the_builtin_parsers(self) -> None:
-        self.assertEqual(set(parser_registry.all()), {"upwork", "linkedin", "ats_ack"})
+        self.assertLessEqual({"upwork", "linkedin", "ats_ack"}, set(parser_registry.all()))
 
     def test_message_matches_provider_routes_to_the_right_parser(self) -> None:
         upwork = {

@@ -25,7 +25,7 @@ def extract_pdf_links(path: str | Path, min_x: float | None = 400.0) -> list[Pdf
         from pypdf import PdfReader
     except ImportError as exc:
         raise RuntimeError(
-            "pypdf is required to read PDF links. Install dependencies with `python3 -m pip install -r requirements.txt`."
+            "pypdf is required to read PDF links. Install it with `python3 -m pip install -e '.[legacy-import]'`."
         ) from exc
 
     reader = PdfReader(str(path))
@@ -54,4 +54,3 @@ def extract_pdf_links(path: str | Path, min_x: float | None = 400.0) -> list[Pdf
                 )
             )
     return links
-
