@@ -1,0 +1,20 @@
+schema_version = 1
+
+[profile]
+slug = "generic"
+name = "Configured job search"
+output_slug = "job-search"
+targets_path = "profile/provider_targets.toml"
+report_path_template = "outputs/reports/{date}-job-search.md"
+email_body_template = "outputs/reports/{date}-job-search.txt"
+email_subject_prefix = "Job search triage"
+profile_files = [
+  "profile/cv.md",
+  "profile/preferences.md",
+  "profile/project_evidence.md",
+  "profile/writing_style.md",
+]
+evaluation_notes = [
+  "Use only facts present in the private profile files.",
+  "Treat missing dealbreakers, authorization, compensation, or location facts as questions.",
+]

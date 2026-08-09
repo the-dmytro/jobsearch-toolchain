@@ -1,18 +1,20 @@
 [project]
 name = "jobsearch-tracker"
-version = "0.1.0"
-description = "Supabase-backed job search and freelance project tracking tools."
+version = "0.2.0"
+description = "Local-first job search automation, tracking, and analytics tools."
 requires-python = ">=3.10"
 dependencies = [
   "beautifulsoup4>=4.12",
   "httpx>=0.28",
-  "psycopg[binary]>=3.2",
-  "pypdf>=6.0",
   "python-dateutil>=2.9",
   "python-dotenv>=1.0",
-  "supabase>=2.0",
   "tomli>=2.0; python_version < '3.11'",
 ]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+supabase = ["supabase>=2.0"]
+legacy-import = ["pypdf>=6.0"]
 
 [project.scripts]
 jobtracker = "jobtracker.cli:main"
@@ -21,6 +23,10 @@ jobtracker = "jobtracker.cli:main"
 [project.entry-points."jobtracker.sources"]
 
 [project.entry-points."jobtracker.mail.parsers"]
+
+[project.entry-points."jobtracker.mail.inboxes"]
+
+[project.entry-points."jobtracker.mail.senders"]
 
 [project.entry-points."jobtracker.stores"]
 
@@ -37,13 +43,6 @@ branch = false
 source = ["jobtracker"]
 omit = [
   "*/__main__.py",
-  "jobtracker/cli.py",
-  # One-shot CSV/PDF import CLIs — covered by dedicated tests but inflate the
-  # gate beyond the connector/store framework the polish plan targets.
-  "jobtracker/linkedin_import.py",
-  "jobtracker/greenhouse_import.py",
-  "jobtracker/legacy_import.py",
-  "jobtracker/pdf_links.py",
 ]
 
 [tool.coverage.report]
@@ -55,3 +54,10 @@ exclude_lines = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

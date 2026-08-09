@@ -166,7 +166,9 @@ class MaildirInboxTests(unittest.TestCase):
 
     def test_limit_keeps_the_newest_files_per_subdir(self) -> None:
         for index in range(3):
-            self.write_message("cur", f"100000000{index}.eml", build_message(message_id=f"cur-{index}@example.com"))
+            self.write_message(
+                "cur", f"100000000{index}.eml", build_message(message_id=f"cur-{index}@example.com")
+            )
 
         messages = MaildirInbox(self.root).fetch_messages(self.root.name, limit=2)
 

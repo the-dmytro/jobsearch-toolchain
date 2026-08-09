@@ -14,7 +14,12 @@ from unittest import mock
 from jobtracker import cli as jobtracker_cli
 from jobtracker.automation_state import AutomationStateStore
 from jobtracker.dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
-from jobtracker.gmail_imap import MailImapClient, filter_provider_messages, parse_email_message, resolve_mail_folder
+from jobtracker.gmail_imap import (
+    MailImapClient,
+    filter_provider_messages,
+    parse_email_message,
+    resolve_mail_folder,
+)
 from jobtracker.upwork_email import parse_upwork_alert_payload
 from jobtracker.validation import normalize_provider_external_id, validate_payload
 
@@ -62,13 +67,29 @@ class AutomationLocalToolsTests(unittest.TestCase):
         self.assertIn("opportunities[0].title is required", result.errors)
         self.assertIn("opportunities[0] needs external_id or source_url", result.errors)
 
+    def test_legacy_aliases_are_read_into_canonical_fields_with_warnings(self) -> None:
+        payload = {
+            "run": {"run_key": "legacy-1", "status": "completed"},
+            "emails": [{"source_type": "email", "external_id": "message-1"}],
+            "jobs": [{"title": "Software Engineer", "external_id": "job-1"}],
+        }
+
+        result = validate_payload(payload, provider="example")
+
+        self.assertEqual(result.normalized["source_items"], payload["emails"])
+        self.assertEqual(result.normalized["opportunities"], payload["jobs"])
+        self.assertTrue(any("emails" in warning for warning in result.warnings))
+        self.assertTrue(any("jobs" in warning for warning in result.warnings))
+
     def test_normalize_provider_external_id_extracts_ids_from_urls(self) -> None:
         self.assertEqual(
             normalize_provider_external_id("upwork", "https://www.upwork.com/jobs/~022047650000881711706/"),
             "022047650000881711706",
         )
         self.assertEqual(
-            normalize_provider_external_id("linkedin", "https://www.linkedin.com/jobs/view/4242424242/?trackingId=x"),
+            normalize_provider_external_id(
+                "linkedin", "https://www.linkedin.com/jobs/view/4242424242/?trackingId=x"
+            ),
             "4242424242",
         )
 
@@ -89,14 +110,33 @@ class AutomationLocalToolsTests(unittest.TestCase):
             )
 
             self.assertEqual(upserted["upserted"], 1)
-            self.assertEqual([item["external_id"] for item in store.pending_source_items("upwork", "evaluation")], ["gmail-msg-1"])
+            self.assertEqual(
+                [item["external_id"] for item in store.pending_source_items("upwork", "evaluation")],
+                ["gmail-msg-1"],
+            )
 
             store.mark_source_stage("upwork", "email", "gmail-msg-1", "evaluated")
 
             self.assertEqual(store.pending_source_items("upwork", "evaluation"), [])
-            self.assertTrue(store.reserve_email("email-key-1", provider="upwork", run_key="upwork-1", to_address="job@example.com", subject="Report"))
+            self.assertTrue(
+                store.reserve_email(
+                    "email-key-1",
+                    provider="upwork",
+                    run_key="upwork-1",
+                    to_address="job@example.com",
+                    subject="Report",
+                )
+            )
             store.mark_email_sent("email-key-1")
-            self.assertFalse(store.reserve_email("email-key-1", provider="upwork", run_key="upwork-1", to_address="job@example.com", subject="Report"))
+            self.assertFalse(
+                store.reserve_email(
+                    "email-key-1",
+                    provider="upwork",
+                    run_key="upwork-1",
+                    to_address="job@example.com",
+                    subject="Report",
+                )
+            )
 
     def test_parse_email_message_extracts_body_and_links(self) -> None:
         message = EmailMessage()
@@ -126,7 +166,7 @@ class AutomationLocalToolsTests(unittest.TestCase):
                     "subject": "New job alert: Finish Job-Search App for Québec",
                     "timestamp": "2026-05-15T02:22:47+00:00",
                     "text": (
-                        "New job alert Hi Dmytro, This job was just posted and matches your alert settings. "
+                        "New job alert Hi Candidate, This job was just posted and matches your alert settings. "
                         "---------- Finish Job-Search App for Québec: "
                         "https://www.upwork.com/jobs/~022055111032577149695?link=title&n=null "
                         "Hourly: $15.00 - $40.00 · Est. time: 1 to 3 months · Posted Fri, May 15 "
@@ -140,7 +180,9 @@ class AutomationLocalToolsTests(unittest.TestCase):
             ],
         }
 
-        parsed = parse_upwork_alert_payload(payload, run_key="upwork-2026-05-18-0811", now="2026-05-18T08:11:27+00:00")
+        parsed = parse_upwork_alert_payload(
+            payload, run_key="upwork-2026-05-18-0811", now="2026-05-18T08:11:27+00:00"
+        )
 
         self.assertEqual(parsed["run"]["run_key"], "upwork-2026-05-18-0811")
         self.assertEqual(parsed["run"]["opportunities_count"], 1)
@@ -151,7 +193,9 @@ class AutomationLocalToolsTests(unittest.TestCase):
         self.assertEqual(opportunity["engagement_type"], "hourly")
         self.assertEqual(opportunity["compensation_text"], "Hourly: $15.00 - $40.00")
         self.assertEqual(opportunity["metadata"]["estimated_time"], "1 to 3 months")
-        self.assertEqual(opportunity["metadata"]["client_economics"], "Payment verified · 4.88 stars · $23K spent · Canada")
+        self.assertEqual(
+            opportunity["metadata"]["client_economics"], "Payment verified · 4.88 stars · $23K spent · Canada"
+        )
         self.assertEqual(opportunity["metadata"]["page_enrichment_status"], "skipped_cloudflare_by_design")
         self.assertEqual(opportunity["metadata"]["skills"], ["iPad App Development"])
 
@@ -224,7 +268,9 @@ class AutomationLocalToolsTests(unittest.TestCase):
 
         payload = json.loads(buffer.getvalue())
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["resolved"], {"upwork": "Upwork", "linkedin": "Job/LinkedIn", "job-responses": "Job"})
+        self.assertEqual(
+            payload["resolved"], {"upwork": "Upwork", "linkedin": "Job/LinkedIn", "job-responses": "Job"}
+        )
 
     def test_filter_provider_messages_keeps_only_alert_like_messages(self) -> None:
         messages = [
@@ -245,7 +291,7 @@ class AutomationLocalToolsTests(unittest.TestCase):
             {
                 "external_id": "linkedin-application-sent",
                 "from": "LinkedIn Jobs <jobs-noreply@linkedin.com>",
-                "subject": "Dmytro, your application was sent to adesso Spain",
+                "subject": "Candidate, your application was sent to Example Company",
                 "text": "View your application for this LinkedIn job.",
                 "links": ["https://www.linkedin.com/jobs/view/4407831006/"],
             },
@@ -286,7 +332,7 @@ class AutomationLocalToolsTests(unittest.TestCase):
             },
             {
                 "external_id": "gmail-sent-report",
-                "from": "Me <personal@gmail.com>",
+                "from": "Me <person@example.com>",
                 "subject": "Upwork job alerts - 2026-05-18 09:00 - no good matches",
                 "text": "Upwork jobs worth attention: none",
                 "links": ["https://www.upwork.com/jobs/~022047650000881711706/"],
@@ -297,7 +343,9 @@ class AutomationLocalToolsTests(unittest.TestCase):
             linkedin = filter_provider_messages("linkedin", messages)
             upwork = filter_provider_messages("upwork", messages)
 
-        self.assertEqual([item["external_id"] for item in linkedin.matched], ["linkedin-alert", "linkedin-fit"])
+        self.assertEqual(
+            [item["external_id"] for item in linkedin.matched], ["linkedin-alert", "linkedin-fit"]
+        )
         self.assertEqual([item["external_id"] for item in upwork.matched], ["upwork-alert"])
         self.assertEqual(linkedin.skipped, 7)
         self.assertEqual(upwork.skipped, 8)
@@ -502,7 +550,9 @@ class AutomationLocalToolsTests(unittest.TestCase):
         self.assertEqual(enriched["opportunities"][0]["dedupe_status"], "same_company_recent_application")
         self.assertEqual(enriched["opportunities"][0]["dedupe_source"], "db")
         self.assertEqual(enriched["opportunities"][0]["email_policy"], "suppress_detail")
-        self.assertEqual(enriched["opportunities"][0]["dedupe_reasons"], ["db_same_company_recent_application"])
+        self.assertEqual(
+            enriched["opportunities"][0]["dedupe_reasons"], ["db_same_company_recent_application"]
+        )
         self.assertEqual(enriched["opportunities"][1]["dedupe_status"], "new")
 
     def test_db_dedupe_ignores_matches_only_from_current_run(self) -> None:

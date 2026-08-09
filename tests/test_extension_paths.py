@@ -17,7 +17,7 @@ from unittest import mock
 
 from jobtracker.core import registry as core_registry
 from jobtracker.core.errors import UnknownConnectorError
-from jobtracker.core.models import Candidate, CollectionContext, FetchMetrics
+from jobtracker.core.models import Candidate, CollectionContext, ConnectorBuildContext, FetchMetrics
 from jobtracker.core.registry import Registry
 from jobtracker.notify.registry import notifier_registry
 from jobtracker.sources import registry as sources_registry
@@ -153,11 +153,12 @@ class InTreeRegistrationTests(unittest.TestCase):
         source = sources_registry.build_generic_source("json-api", "boards")
         self.assertEqual(source.slug, "boards")
 
-    def test_load_source_entry_point_instantiates_classes(self) -> None:
+    def test_load_source_entry_point_defers_build_until_context_is_available(self) -> None:
         entry = FakeEntryPoint("plugin_board", PluginSource)
-        loaded = sources_registry._load_source_entry_point(entry)
+        spec = sources_registry._load_source_entry_point(entry)
+        with self.assertWarns(DeprecationWarning):
+            loaded = spec.build(ConnectorBuildContext(root=FIXTURE_ROOT, slug="plugin_board", options={}))
         self.assertIsInstance(loaded, PluginSource)
-        self.assertEqual(loaded.slug, "plugin_board")
 
 
 class RegistryTests(unittest.TestCase):
@@ -272,7 +273,9 @@ class EntryPointPluginTests(unittest.TestCase):
     def test_a_custom_loader_can_instantiate_the_plugin_class(self) -> None:
         registry: Registry[Any] = Registry("source")
 
-        self.load_into(registry, [FakeEntryPoint("plugin_board", PluginSource)], entry_point_loader=instantiating_loader)
+        self.load_into(
+            registry, [FakeEntryPoint("plugin_board", PluginSource)], entry_point_loader=instantiating_loader
+        )
 
         loaded = registry.get("plugin_board")
         self.assertIsInstance(loaded, PluginSource)

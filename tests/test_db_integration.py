@@ -16,7 +16,6 @@ from jobtracker.migrations import apply_migrations
 from jobtracker.payloads import check_duplicates, upsert_run_payload
 from jobtracker.provider_fetch import collect_provider_run
 
-
 LEGACY_HEADER = [
     "Company",
     "Location",
@@ -32,7 +31,17 @@ LEGACY_HEADER = [
     "Notes",
 ]
 
-LINKEDIN_APP_HEADER = ["stage", "company", "role", "location", "work_model", "job_link", "applied_approx", "posting_status", "extra_info"]
+LINKEDIN_APP_HEADER = [
+    "stage",
+    "company",
+    "role",
+    "location",
+    "work_model",
+    "job_link",
+    "applied_approx",
+    "posting_status",
+    "extra_info",
+]
 
 GREENHOUSE_HEADER = [
     "stage",
@@ -307,8 +316,12 @@ class DbIntegrationTests(unittest.TestCase):
             with connect_test() as conn:
                 first_legacy = import_legacy_csv(conn, legacy_csv)
                 second_legacy = import_legacy_csv(conn, legacy_csv)
-                first_linkedin = import_linkedin_tracking(conn, jobs_csv=linkedin_jobs, active_csv=linkedin_active, archived_csv=linkedin_archived)
-                second_linkedin = import_linkedin_tracking(conn, jobs_csv=linkedin_jobs, active_csv=linkedin_active, archived_csv=linkedin_archived)
+                first_linkedin = import_linkedin_tracking(
+                    conn, jobs_csv=linkedin_jobs, active_csv=linkedin_active, archived_csv=linkedin_archived
+                )
+                second_linkedin = import_linkedin_tracking(
+                    conn, jobs_csv=linkedin_jobs, active_csv=linkedin_active, archived_csv=linkedin_archived
+                )
                 first_greenhouse = import_greenhouse_tracking(conn, csv_path=greenhouse_csv)
                 second_greenhouse = import_greenhouse_tracking(conn, csv_path=greenhouse_csv)
                 first_payload = upsert_run_payload(conn, "upwork", payload_path)
@@ -338,12 +351,24 @@ class DbIntegrationTests(unittest.TestCase):
 
     def test_provider_collectors_upsert_and_skip_duplicates(self) -> None:
         with connect_test() as conn:
-            first_dou = collect_provider_run("dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
-            second_dou = collect_provider_run("dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
-            first_workua = collect_provider_run("workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
-            second_workua = collect_provider_run("workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
-            first_djinni = collect_provider_run("djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
-            second_djinni = collect_provider_run("djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1)
+            first_dou = collect_provider_run(
+                "dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
+            second_dou = collect_provider_run(
+                "dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
+            first_workua = collect_provider_run(
+                "workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
+            second_workua = collect_provider_run(
+                "workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
+            first_djinni = collect_provider_run(
+                "djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
+            second_djinni = collect_provider_run(
+                "djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+            )
             first_greenhouse = collect_provider_run(
                 "greenhouse",
                 conn=conn,

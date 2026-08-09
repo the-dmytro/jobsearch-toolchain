@@ -6,7 +6,7 @@ import ssl
 from email.message import EmailMessage
 
 from ...config import load_env_file
-from ..base import MailSender, OutgoingMessage, SendReceipt
+from ..base import OutgoingMessage, SendReceipt
 
 
 def _smtp_setting(name: str, default: str | None = None) -> str | None:

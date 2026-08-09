@@ -7,7 +7,6 @@ from typing import Any
 
 from ...config import load_env_file, load_settings
 from ...utils import normalize_name, slugify
-from ..base import MailInbox
 from .eml import parse_email_message
 
 
@@ -44,11 +43,15 @@ def _first_message_bytes(items: list[Any]) -> bytes | None:
 class MailImapClient:
     def __init__(self, host: str | None = None, user: str | None = None, password: str | None = None) -> None:
         load_env_file()
-        self.host = host or os.getenv("JOBTRACKER_IMAP_HOST") or os.getenv("GMAIL_IMAP_HOST", "imap.gmail.com")
+        self.host = (
+            host or os.getenv("JOBTRACKER_IMAP_HOST") or os.getenv("GMAIL_IMAP_HOST", "imap.gmail.com")
+        )
         self.user = user or os.getenv("JOBTRACKER_IMAP_USER") or os.getenv("GMAIL_IMAP_USER")
         self.password = password or os.getenv("JOBTRACKER_IMAP_PASSWORD") or os.getenv("GMAIL_IMAP_PASSWORD")
         if not self.user or not self.password:
-            raise RuntimeError("JOBTRACKER_IMAP_USER and JOBTRACKER_IMAP_PASSWORD are required for IMAP access.")
+            raise RuntimeError(
+                "JOBTRACKER_IMAP_USER and JOBTRACKER_IMAP_PASSWORD are required for IMAP access."
+            )
         self._conn: imaplib.IMAP4_SSL | None = None
 
     def __enter__(self) -> "MailImapClient":
@@ -93,10 +96,14 @@ class MailImapClient:
     def resolve_label(self, provider: str, explicit_label: str | None = None) -> str:
         return self.resolve_folder(provider, explicit_folder=explicit_label)
 
-    def fetch_label_messages(self, label: str, since: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    def fetch_label_messages(
+        self, label: str, since: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         return self.fetch_messages(label, since=since, limit=limit)
 
-    def fetch_messages(self, folder: str, since: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    def fetch_messages(
+        self, folder: str, since: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         self.conn.select(f'"{folder}"', readonly=True)
         criteria = ["ALL"]
         if since:

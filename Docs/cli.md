@@ -1,123 +1,94 @@
 # CLI command map
 
-Commands from `jobtracker/cli.py` (`python -m jobtracker <command>`). Grouped by workflow; aliases are noted.
+Run commands as `python -m jobtracker <command>`. Add `--root /path/to/project` to the
+root-aware setup, pipeline, source, mail, store, and replay commands when the shell is
+not already at the project root.
 
----
-
-## Setup
+## Standard local workflow
 
 | Command | Purpose |
-|---------|---------|
-| `init` | Scaffold `config/jobsearch.toml` and `profile/` from examples/templates |
-| `doctor` | Validate config, profile placeholders; optional network checks for connectors/DB/IMAP/SMTP/notifiers |
-| `migrate` | Apply SQL migrations under `db/migrations/` |
-| `db-smoke` | Read-only DB connectivity smoke test (`--test` / `--write-test`) |
+| --- | --- |
+| `init` | Copy the neutral config and profile templates into ignored private paths |
+| `doctor` | Validate the v1 config/profile and only the components the user configured |
+| `run <pipeline>` | Collect, validate, deduplicate, retain artifacts, and optionally persist/notify |
+| `fetch-source <slug>` | Run any configured, built-in, or plugin source |
+| `upsert-run` | Persist one PAYLOAD-V1 artifact through the configured `JobStore` |
+| `check-duplicates` | Query the configured `JobStore` through STORE-V1 |
+| `export-summary` | Export one application summary through the configured `JobStore` |
 
 ```bash
 python -m jobtracker init
 python -m jobtracker doctor --skip-network
-python -m jobtracker migrate
+python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
+python -m jobtracker run jobboards --fixture-dir jobtracker/fixtures/provider_fetch
 ```
 
----
+The generated config uses SQLite at `outputs/jobsearch.sqlite3`. `--dry-run` writes
+deterministic artifacts but does not persist or notify. All paths in the config and
+root-aware commands resolve from the selected root, not the shell working directory.
 
-## Discovery
-
-| Command | Purpose |
-|---------|---------|
-| `fetch-dou` | Discover jobs from DOU and upsert (or `--dry-run`) |
-| `fetch-workua` | Discover jobs from Work.ua |
-| `fetch-djinni` | Discover jobs from Djinni |
-| `fetch-greenhouse-jobs` | Discover jobs from Greenhouse boards (`--board-token`, `--max-boards`) |
-| `benchmark-sources` | Fixture or `--live` benchmark across comma-separated providers |
-| `prepare-jobboard-run` | Multi-provider fetch → validate → local/DB dedupe → manifest |
-
-Shared fetch flags (where applicable): `--dry-run`, `--payload-out`, `--max-pages`, `--detail-limit`, `--targets`.
+## Sources
 
 ```bash
-python -m jobtracker fetch-dou --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
+python -m jobtracker fetch-source example_jsonld --dry-run
 python -m jobtracker benchmark-sources --providers dou,workua,djinni,greenhouse
-python -m jobtracker prepare-jobboard-run --profile ios --providers dou,workua,djinni
 ```
 
----
+The v0.2 compatibility aliases are `fetch-dou`, `fetch-workua`, `fetch-djinni`, and
+`fetch-greenhouse-jobs`. They remain supported, but new workflows should use
+`fetch-source <slug>` and `[sources.<slug>]`.
+
+`prepare-jobboard-run` is a lower-level compatibility command. It requires explicit
+`--profile` and `--providers`; normal automation should use a named pipeline.
 
 ## Mail
 
-| Command | Purpose |
-|---------|---------|
-| `discover-mail-folders` | List IMAP folders and resolve job-alert aliases |
-| `discover-gmail-labels` | Alias for `discover-mail-folders` |
-| `fetch-mail-folder` | Fetch provider messages from an IMAP folder into local source state |
-| `fetch-gmail-label` | Alias for `fetch-mail-folder` |
-| `parse-upwork-alerts` | Parse fetched Upwork alert emails into an automation payload |
-| `send-report-email` | Send SMTP report with idempotency via local state DB |
+Mail is optional. The commands below consume `[mail.inbox]`, `[mail.parsers.<slug>]`,
+and `[mail.outbox]` when present. Without those sections, the IMAP/SMTP environment
+configuration remains compatible.
 
 ```bash
 python -m jobtracker discover-mail-folders
-python -m jobtracker fetch-mail-folder --provider upwork --output outputs/mail/upwork.source.json
-python -m jobtracker parse-upwork-alerts --source-payload outputs/mail/upwork.source.json
-python -m jobtracker send-report-email --provider upwork --run-key RUN --subject "..." --body-file report.txt
+python -m jobtracker fetch-mail-folder --provider example --output outputs/mail/example.source.json
+python -m jobtracker send-report-email \
+  --provider example \
+  --run-key example-2026-01-01 \
+  --subject "Job-search report" \
+  --body-file outputs/report.txt
 ```
 
----
+`discover-gmail-labels` and `fetch-gmail-label` are compatibility aliases.
+`parse-upwork-alerts` remains available for the existing Upwork message format.
 
-## Persistence
-
-| Command | Purpose |
-|---------|---------|
-| `upsert-run` | Upsert one automation run payload (`--provider`, `--payload`, optional `--report`) |
-| `validate-payload` | Validate/normalize payload JSON to the contract |
-| `check-duplicates` | Check whether company/title/external_id was already seen |
-| `build-local-index` | Summarize local payload history for fallback dedupe |
-| `dedupe-candidates` | Enrich a payload with local (and optional DB) duplicate evidence |
-| `sync-pending-runs` | Upsert local payloads not yet marked DB-synced |
-| `import-legacy` | Import legacy semicolon-delimited job-search CSV |
-| `import-linkedin-tracking` | Import LinkedIn jobs / application tracker CSVs |
-| `import-greenhouse` | Import Greenhouse application tracker CSV |
+## Payloads, dedupe, and store switching
 
 ```bash
-python -m jobtracker validate-payload --provider dou --payload path/to.payload.json
-python -m jobtracker upsert-run --provider dou --payload path/to.deduped.payload.json
-python -m jobtracker sync-pending-runs --payload-dir outputs/automation-payloads
+python -m jobtracker validate-payload --provider example --payload outputs/example.payload.json
+python -m jobtracker upsert-run --provider example --payload outputs/example.payload.json
+python -m jobtracker build-local-index --payload-dir outputs/automation-payloads
+python -m jobtracker dedupe-candidates \
+  --provider example \
+  --payload outputs/example.payload.json \
+  --output outputs/example.deduped.payload.json
 ```
 
----
-
-## Reporting
-
-| Command | Purpose |
-|---------|---------|
-| `export-summary` | Export a Markdown application summary (`--application-id`) |
-| `send-report-email` | SMTP delivery of a prepared report body (also listed under Mail) |
-
----
-
-## Automation
-
-| Command | Purpose |
-|---------|---------|
-| `run` | Execute a named pipeline from `config/jobsearch.toml` (prepare → optional upsert → notify) |
-| `prepare-jobboard-run` | Lower-level multi-board prepare used by `run` for `type = "jobboard"` |
-| `doctor` | Preflight before scheduled runs |
-| `sync-pending-runs` | Catch up offline/dry-run payloads |
+After opting into PostgreSQL, replay retained recovery artifacts with:
 
 ```bash
-python -m jobtracker run jobboards --dry-run
-python -m jobtracker run jobboards
+python -m jobtracker sync-pending-runs \
+  --target-store postgres \
+  --payload-dir outputs/automation-payloads
 ```
 
-Pipeline definition example (`config/jobsearch.toml`):
+The replay state database prevents already-synced `run_key` values from being sent
+again. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
 
-```toml
-[pipelines.jobboards]
-type = "jobboard"
-profile = "ios"
-providers = ["dou", "workua", "djinni"]
-include_db = true
+## Optional PostgreSQL and imports
 
-[pipelines.jobboards.notify]
-channels = ["email"]
-```
+`migrate` and `db-smoke` target configured PostgreSQL/Supabase credentials. CSV import
+commands are `import-legacy`, `import-linkedin-tracking`, and `import-greenhouse`.
+They are migration helpers, not part of the fresh local setup. PDF link recovery in
+legacy imports requires the `legacy-import` optional dependency.
 
-See [architecture.md](architecture.md) for execution diagrams and [automation.md](automation.md) for playbooks and scheduling.
+See [configuration](configuration.md), [architecture](architecture.md), and the
+[onboarding book](README.md).

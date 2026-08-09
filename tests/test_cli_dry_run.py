@@ -102,14 +102,26 @@ class CliDryRunTests(unittest.TestCase):
 
         profile_dir = Path(__file__).resolve().parent.parent / "profile"
         profile_dir.mkdir(exist_ok=True)
-        ios_toml = profile_dir / "ios.toml"
-        created_ios = False
-        if not ios_toml.exists():
+        generic_toml = profile_dir / "generic.toml"
+        provider_targets = profile_dir / "provider_targets.toml"
+        created_generic = False
+        created_targets = False
+        if not generic_toml.exists():
             shutil.copyfile(
-                Path(__file__).resolve().parent.parent / "profile" / "templates" / "ios.toml",
-                ios_toml,
+                Path(__file__).resolve().parent.parent / "profile" / "templates" / "generic" / "generic.toml",
+                generic_toml,
             )
-            created_ios = True
+            created_generic = True
+        if not provider_targets.exists():
+            shutil.copyfile(
+                Path(__file__).resolve().parent.parent
+                / "profile"
+                / "templates"
+                / "generic"
+                / "provider_targets.toml",
+                provider_targets,
+            )
+            created_targets = True
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
@@ -120,7 +132,13 @@ class CliDryRunTests(unittest.TestCase):
                         "jobtracker",
                         "prepare-jobboard-run",
                         "--profile",
-                        "ios",
+                        "generic",
+                        "--root",
+                        str(Path(__file__).resolve().parent.parent),
+                        "--config",
+                        "config/jobsearch.example.toml",
+                        "--providers",
+                        "example_jsonld",
                         "--fixture-dir",
                         str(self.fixture_dir),
                         "--now",
@@ -136,30 +154,34 @@ class CliDryRunTests(unittest.TestCase):
                 )
 
                 manifest = json.loads(result.stdout)
-                self.assertEqual(manifest["profile"]["slug"], "ios")
-                self.assertEqual(manifest["providers"], ["dou", "workua", "djinni"])
-                self.assertEqual(manifest["run"]["run_key"], "ua-jobboards-2026-04-29")
+                self.assertEqual(manifest["profile"]["slug"], "generic")
+                self.assertEqual(manifest["providers"], ["example_jsonld"])
+                self.assertEqual(manifest["run"]["run_key"], "job-search-2026-04-29")
                 self.assertEqual(manifest["run"]["status"], "completed")
                 self.assertEqual(manifest["db"]["status"], "skipped")
                 self.assertTrue(Path(manifest["manifest_path"]).exists())
                 self.assertEqual(
                     manifest["artifacts"]["report_path"],
-                    "outputs/reports/2026-04-29-ua-jobboards-triage.md",
+                    str(Path(__file__).resolve().parent.parent / "outputs/reports/2026-04-29-job-search.md"),
                 )
                 self.assertEqual(
                     manifest["artifacts"]["email_body_path"],
-                    str(root / "2026-04-29-ua-jobboards-email-body.txt"),
+                    str(Path(__file__).resolve().parent.parent / "outputs/reports/2026-04-29-job-search.txt"),
                 )
-                self.assertEqual(len(manifest["provider_runs"]), 3)
+                self.assertEqual(len(manifest["provider_runs"]), 1)
                 for provider_run in manifest["provider_runs"]:
-                    self.assertEqual(provider_run["run_key"], f"{provider_run['provider']}-ua-jobboards-2026-04-29")
+                    self.assertEqual(
+                        provider_run["run_key"], f"{provider_run['provider']}-job-search-2026-04-29"
+                    )
                     self.assertGreaterEqual(provider_run["opportunities"], 1)
                     self.assertTrue(Path(provider_run["payload_path"]).exists())
                     self.assertTrue(Path(provider_run["normalized_payload_path"]).exists())
                     self.assertTrue(Path(provider_run["deduped_payload_path"]).exists())
         finally:
-            if created_ios:
-                ios_toml.unlink(missing_ok=True)
+            if created_generic:
+                generic_toml.unlink(missing_ok=True)
+            if created_targets:
+                provider_targets.unlink(missing_ok=True)
 
     def test_validate_payload_cli_writes_normalized_payload(self) -> None:
         payload = {
@@ -253,7 +275,10 @@ class CliDryRunTests(unittest.TestCase):
             file_payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(stdout_payload["run"]["run_key"], "upwork-2026-05-18-0811")
             self.assertEqual(file_payload["opportunities"][0]["external_id"], "022056285060802688779")
-            self.assertEqual(file_payload["opportunities"][0]["metadata"]["page_enrichment_status"], "skipped_cloudflare_by_design")
+            self.assertEqual(
+                file_payload["opportunities"][0]["metadata"]["page_enrichment_status"],
+                "skipped_cloudflare_by_design",
+            )
 
     def test_dedupe_candidates_cli_enriches_payload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

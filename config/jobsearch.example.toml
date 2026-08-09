@@ -1,41 +1,42 @@
+schema_version = 1
+
 [paths]
 config_dir = "config"
 profile_dir = "profile"
-output_dir = "outputs/automation-payloads"
+output_dir = "outputs"
 payload_dir = "outputs/automation-payloads"
+
+[store]
+backend = "sqlite"
+sqlite_path = "outputs/jobsearch.sqlite3"
+artifact_backend = "local"
+artifact_local_path = "outputs/artifacts"
 
 [pipelines.jobboards]
 type = "jobboard"
-profile = "ios"
-providers = ["dou", "workua", "djinni"]
+profile = "generic"
+providers = ["example_jsonld"]
 include_db = true
 max_pages = 1
-
-[pipelines.jobboards.notify]
-channels = ["email"]
-
-[notify.email]
-to = "{{REPORT_EMAIL}}"
-from = "{{SMTP_FROM}}"
-subject_template = "{subject} — {run_key}"
-
-[notify.webhook]
-url = "{{WEBHOOK_URL}}"
-
-[notify.slack]
-webhook_url = "{{SLACK_WEBHOOK_URL}}"
-
-[notify.telegram]
-bot_token = "{{TELEGRAM_BOT_TOKEN}}"
-chat_id = "{{TELEGRAM_CHAT_ID}}"
 
 # Config-only sources (no Python). Add the slug to a pipeline's providers list to run.
 [sources.example_jsonld]
 kind = "jsonld"
-listing_url = "https://example.com/careers"
+listing_url = "https://careers.example.invalid/jobs"
 detail_limit = 10
 
 [sources.example_jsonld.role_lane]
-name = "engineering"
+name = "configured-role-lane"
 include_terms = ["engineer", "developer"]
 exclude_terms = ["intern", "manager"]
+
+# Notifications and mail are opt-in. Secrets are environment variables, never TOML values.
+# [pipelines.jobboards.notify]
+# channels = ["email"]
+# [notify.email]
+# kind = "email"
+# to_env = "JOBTRACKER_REPORT_EMAIL"
+# [mail.inbox]
+# kind = "imap"
+# [mail.outbox]
+# kind = "smtp"

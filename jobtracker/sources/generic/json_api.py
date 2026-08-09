@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from jobtracker.core.models import Candidate, CollectionContext
-from jobtracker.sources.shared.infer import _excerpt, _infer_seniority, _infer_work_model, _matches_lane, _optional_iso
+from jobtracker.sources.shared.infer import (
+    _excerpt,
+    _infer_seniority,
+    _infer_work_model,
+    _matches_lane,
+    _optional_iso,
+)
 from jobtracker.sources.shared.parse import _text_from_html
 from jobtracker.sources.shared.payload import _is_duplicate, _load_existing_refs
 from jobtracker.url_tools import clean_url
@@ -27,24 +33,33 @@ class JsonApiSource:
             return jobs if isinstance(jobs, list) else []
         return []
 
-    def _parse_job(self, item: dict[str, Any], token: str, lane: dict[str, Any], metrics: Any) -> Candidate | None:
+    def _parse_job(
+        self, item: dict[str, Any], token: str, lane: dict[str, Any], metrics: Any
+    ) -> Candidate | None:
         title = normalize_space(item.get("title") or item.get("text"))
         if not _matches_lane(title, lane):
             metrics.jobs_skipped_by_filter += 1
             return None
         source_url = clean_url(
-            item.get("absolute_url")
-            or item.get("hostedUrl")
-            or item.get("jobUrl")
-            or item.get("applyUrl")
+            item.get("absolute_url") or item.get("hostedUrl") or item.get("jobUrl") or item.get("applyUrl")
         )
         if not source_url:
             return None
         job_id = item.get("id")
-        external_id = f"{self.external_id_prefix}{token}:{job_id}" if self.external_id_prefix else str(job_id or source_url)
-        content = _text_from_html(item.get("content") or item.get("descriptionPlain") or item.get("description"))
+        external_id = (
+            f"{self.external_id_prefix}{token}:{job_id}"
+            if self.external_id_prefix
+            else str(job_id or source_url)
+        )
+        content = _text_from_html(
+            item.get("content") or item.get("descriptionPlain") or item.get("description")
+        )
         location = normalize_space(
-            ((item.get("location") or {}).get("name") if isinstance(item.get("location"), dict) else item.get("location"))
+            (
+                (item.get("location") or {}).get("name")
+                if isinstance(item.get("location"), dict)
+                else item.get("location")
+            )
             or ((item.get("categories") or {}).get("location"))
         )
         company = normalize_space(item.get("company_name") or item.get("company"))
@@ -60,14 +75,18 @@ class JsonApiSource:
             summary=_excerpt(content),
             description=content or None,
             first_seen_at=_optional_iso(item.get("first_published") or item.get("createdAt")),
-            last_seen_at=_optional_iso(item.get("updated_at") or item.get("updatedAt") or item.get("first_published")),
+            last_seen_at=_optional_iso(
+                item.get("updated_at") or item.get("updatedAt") or item.get("first_published")
+            ),
             metadata={"provider": self.slug, "board_token": token},
         )
 
     def discover(self, ctx: CollectionContext) -> tuple[list[Candidate], str, list[str]]:
         opts = ctx.options
         provider_config = ctx.provider_config
-        tokens = opts.get("board_tokens") or opts.get("tokens") or provider_config.get("manual_board_tokens") or []
+        tokens = (
+            opts.get("board_tokens") or opts.get("tokens") or provider_config.get("manual_board_tokens") or []
+        )
         max_boards = opts.get("max_boards")
         lane = ctx.role_lane
         metrics = ctx.metrics

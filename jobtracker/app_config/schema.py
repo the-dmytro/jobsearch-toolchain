@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,9 @@ def _require_str_list(value: Any, path: str) -> list[str]:
 
 def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
     root = _require_mapping(data, "config")
+    schema_version = root.get("schema_version", 1)
+    if schema_version != 1:
+        raise ConfigValidationError("schema_version must be 1")
     paths = _require_mapping(root.get("paths", {}), "paths")
     validated_paths = {
         "config_dir": str(paths.get("config_dir") or "config"),
@@ -51,7 +55,7 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
             raise ConfigValidationError(f"pipelines.{name}.type must be one of: jobboard")
         profile = _require_str(pipeline_table.get("profile"), f"pipelines.{name}.profile")
         providers = pipeline_table.get("providers")
-        provider_list = _require_str_list(providers, f"pipelines.{name}.providers") if providers is not None else ["dou", "workua", "djinni"]
+        provider_list = _require_str_list(providers, f"pipelines.{name}.providers")
         notify = pipeline_table.get("notify") or {}
         notify_table = _require_mapping(notify, f"pipelines.{name}.notify") if notify else {}
         channels = notify_table.get("channels") or []
@@ -74,8 +78,37 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
     for channel, channel_config in notify_raw.items():
         notify[str(channel).strip().lower()] = _require_mapping(channel_config, f"notify.{channel}")
 
+    store_raw = _require_mapping(root.get("store", {}), "store")
+    backend = _require_str(store_raw.get("backend", "sqlite"), "store.backend").lower()
+    store = dict(store_raw)
+    store.update(
+        {
+            "backend": backend,
+            "sqlite_path": str(store_raw.get("sqlite_path") or "outputs/jobsearch.sqlite3"),
+            "artifact_backend": _require_str(
+                store_raw.get("artifact_backend", "local"), "store.artifact_backend"
+            ).lower(),
+            "artifact_local_path": str(store_raw.get("artifact_local_path") or "outputs/artifacts"),
+        }
+    )
+
+    sources_raw = _require_mapping(root.get("sources", {}), "sources")
+    sources = {
+        str(slug).strip().lower(): dict(_require_mapping(value, f"sources.{slug}"))
+        for slug, value in sources_raw.items()
+    }
+    for slug, source in sources.items():
+        source["kind"] = _require_str(source.get("kind"), f"sources.{slug}.kind").lower()
+
+    mail_raw = _require_mapping(root.get("mail", {}), "mail")
+    mail = dict(mail_raw)
+
     return {
+        "schema_version": 1,
         "paths": validated_paths,
+        "store": store,
+        "sources": sources,
+        "mail": mail,
         "pipelines": pipelines,
         "notify": notify,
     }
@@ -83,14 +116,28 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
 
 def validate_profile_config(data: dict[str, Any], *, source_path: Path | None = None) -> dict[str, Any]:
     prefix = f"{source_path}: " if source_path else ""
+    if "schema_version" not in data:
+        warnings.warn(
+            f"{prefix}profile config without schema_version is deprecated; add schema_version = 1 before v0.3",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    elif data["schema_version"] != 1:
+        raise ConfigValidationError(f"{prefix}schema_version must be 1")
     profile = _require_mapping(data.get("profile", data), f"{prefix}profile")
     slug = _require_str(profile.get("slug"), f"{prefix}profile.slug")
     name = _require_str(profile.get("name"), f"{prefix}profile.name")
     output_slug = _require_str(profile.get("output_slug"), f"{prefix}profile.output_slug")
     targets_path = _require_str(profile.get("targets_path"), f"{prefix}profile.targets_path")
-    report_path_template = _require_str(profile.get("report_path_template"), f"{prefix}profile.report_path_template")
-    email_body_template = _require_str(profile.get("email_body_template"), f"{prefix}profile.email_body_template")
-    email_subject_prefix = _require_str(profile.get("email_subject_prefix"), f"{prefix}profile.email_subject_prefix")
+    report_path_template = _require_str(
+        profile.get("report_path_template"), f"{prefix}profile.report_path_template"
+    )
+    email_body_template = _require_str(
+        profile.get("email_body_template"), f"{prefix}profile.email_body_template"
+    )
+    email_subject_prefix = _require_str(
+        profile.get("email_subject_prefix"), f"{prefix}profile.email_subject_prefix"
+    )
     profile_files = profile.get("profile_files") or []
     evaluation_notes = profile.get("evaluation_notes") or []
     if not isinstance(profile_files, list):

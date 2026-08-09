@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 from jobtracker.app_config.loader import (
@@ -23,7 +24,7 @@ from jobtracker.app_config.schema import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE_DIR = REPO_ROOT / "profile" / "templates"
+TEMPLATE_DIR = REPO_ROOT / "profile" / "templates" / "generic"
 
 # `profile/` is gitignored, so a fresh clone has no templates to seed a root from.
 requires_profile_templates = unittest.skipUnless(
@@ -31,6 +32,8 @@ requires_profile_templates = unittest.skipUnless(
 )
 
 BASE_CONFIG = """
+schema_version = 1
+
 [paths]
 config_dir = "config"
 profile_dir = "profile"
@@ -51,6 +54,19 @@ channels = ["email"]
 to = "{{REPORT_EMAIL}}"
 from = "{{SMTP_FROM}}"
 subject_template = "{subject} — {run_key}"
+
+[store]
+backend = "sqlite"
+sqlite_path = "outputs/state.sqlite3"
+artifact_backend = "local"
+artifact_local_path = "outputs/artifacts"
+
+[sources.acme]
+kind = "jsonld"
+listing_url = "https://careers.example.invalid/jobs"
+
+[mail.inbox]
+kind = "imap"
 """
 
 LOCAL_CONFIG = """
@@ -88,6 +104,10 @@ class LoadAppConfigTests(unittest.TestCase):
         self.assertEqual(config.pipelines["jobboards"]["max_pages"], 1)
         self.assertEqual(config.paths["output_dir"], "outputs/payloads")
         self.assertEqual(config.notify["email"]["to"], "{{REPORT_EMAIL}}")
+        self.assertEqual(config.schema_version, 1)
+        self.assertEqual(config.store["backend"], "sqlite")
+        self.assertEqual(config.source_configs["acme"]["kind"], "jsonld")
+        self.assertEqual(config.mail["inbox"]["kind"], "imap")
 
     def test_local_overlay_is_deep_merged_over_the_primary_config(self) -> None:
         self.local_path.write_text(LOCAL_CONFIG, encoding="utf-8")
@@ -111,6 +131,23 @@ class LoadAppConfigTests(unittest.TestCase):
         self.assertEqual(config.profile_dir, self.root / "profile")
         self.assertEqual(config.output_dir, self.root / "outputs/payloads")
         self.assertEqual(config.payload_dir, self.root / "outputs/payloads")
+        self.assertEqual(config.store_path, self.root / "outputs/state.sqlite3")
+        self.assertEqual(config.artifact_dir, self.root / "outputs/artifacts")
+
+    def test_absolute_configured_paths_remain_absolute(self) -> None:
+        config = load_app_config(root=self.root)
+
+        self.assertEqual(config.resolve_path("/tmp/jobsearch-output"), Path("/tmp/jobsearch-output"))
+
+    def test_missing_schema_version_is_accepted_with_a_deprecation_warning(self) -> None:
+        self.primary.write_text(BASE_CONFIG.replace("schema_version = 1\n\n", ""), encoding="utf-8")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            config = load_app_config(root=self.root)
+
+        self.assertEqual(config.schema_version, 1)
+        self.assertTrue(any(item.category is DeprecationWarning for item in caught))
 
     def test_relative_config_paths_are_resolved_against_the_root(self) -> None:
         config = load_app_config("config/jobsearch.toml", root=self.root)
@@ -131,14 +168,21 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
         self.assertEqual(validated["paths"]["output_dir"], "outputs/automation-payloads")
         self.assertEqual(validated["pipelines"], {})
         self.assertEqual(validated["notify"], {})
+        self.assertEqual(validated["schema_version"], 1)
+        self.assertEqual(validated["store"]["backend"], "sqlite")
+        self.assertEqual(validated["store"]["sqlite_path"], "outputs/jobsearch.sqlite3")
+        self.assertEqual(validated["sources"], {})
+        self.assertEqual(validated["mail"], {})
 
-    def test_providers_default_to_the_ukrainian_jobboards(self) -> None:
-        validated = validate_jobsearch_config(
-            {"pipelines": {"jobboards": {"type": "jobboard", "profile": "ios"}}}
-        )
+    def test_providers_are_required_for_a_pipeline(self) -> None:
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config(
+                {"pipelines": {"jobboards": {"type": "jobboard", "profile": "generic"}}}
+            )
 
-        self.assertEqual(validated["pipelines"]["jobboards"]["providers"], ["dou", "workua", "djinni"])
-        self.assertTrue(validated["pipelines"]["jobboards"]["include_db"])
+    def test_unknown_schema_version_is_rejected(self) -> None:
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"schema_version": 2})
 
     def test_notify_channel_names_are_normalized(self) -> None:
         validated = validate_jobsearch_config(
@@ -147,6 +191,7 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
                     "jobboards": {
                         "type": "jobboard",
                         "profile": "ios",
+                        "providers": ["acme"],
                         "notify": {"channels": [" Email ", "SLACK"]},
                     }
                 },
@@ -167,7 +212,9 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
 
     def test_empty_provider_list_is_rejected(self) -> None:
         with self.assertRaises(ConfigValidationError):
-            validate_jobsearch_config({"pipelines": {"x": {"type": "jobboard", "profile": "ios", "providers": []}}})
+            validate_jobsearch_config(
+                {"pipelines": {"x": {"type": "jobboard", "profile": "ios", "providers": []}}}
+            )
 
     def test_non_table_sections_are_rejected(self) -> None:
         with self.assertRaises(ConfigValidationError):
@@ -182,42 +229,42 @@ class ProfileLoadingTests(unittest.TestCase):
         self.root = Path(self._temp.name)
         self.profile_dir = self.root / "profile"
         self.profile_dir.mkdir()
-        shutil.copyfile(TEMPLATE_DIR / "ios.toml", self.profile_dir / "ios.toml")
+        shutil.copyfile(TEMPLATE_DIR / "generic.toml", self.profile_dir / "generic.toml")
 
     def test_load_profile_reads_a_template_copy(self) -> None:
-        profile = load_profile("ios", profile_dir=self.profile_dir)
+        profile = load_profile("generic", profile_dir=self.profile_dir)
 
         self.assertIsInstance(profile, JobboardProfile)
-        self.assertEqual(profile.slug, "ios")
-        self.assertEqual(profile.name, "iOS/macOS")
-        self.assertEqual(profile.output_slug, "ua-jobboards")
-        self.assertEqual(profile.email_subject_prefix, "DOU/Work.ua/Djinni iOS job triage")
-        self.assertIn("profile/CV_SOURCE.md", profile.profile_files)
+        self.assertEqual(profile.slug, "generic")
+        self.assertEqual(profile.name, "Configured job search")
+        self.assertEqual(profile.output_slug, "job-search")
+        self.assertEqual(profile.email_subject_prefix, "Job search triage")
+        self.assertIn("profile/cv.md", profile.profile_files)
         self.assertTrue(profile.evaluation_notes)
         self.assertIsNone(profile.email_to)
 
     def test_load_profiles_indexes_every_profile_by_slug(self) -> None:
-        shutil.copyfile(TEMPLATE_DIR / "data-ml-ai.toml", self.profile_dir / "data-ml-ai.toml")
-
         profiles = load_profiles(self.profile_dir)
 
-        self.assertEqual(set(profiles), {"ios", "data-ml-ai"})
-        self.assertEqual(profiles["ios"].output_slug, "ua-jobboards")
+        self.assertEqual(set(profiles), {"generic"})
+        self.assertEqual(profiles["generic"].output_slug, "job-search")
 
     def test_load_profiles_skips_example_files(self) -> None:
-        (self.profile_dir / "sample.example.toml").write_text("[profile]\nslug = 'sample'\n", encoding="utf-8")
+        (self.profile_dir / "sample.example.toml").write_text(
+            "[profile]\nslug = 'sample'\n", encoding="utf-8"
+        )
 
-        self.assertEqual(set(load_profiles(self.profile_dir)), {"ios"})
+        self.assertEqual(set(load_profiles(self.profile_dir)), {"generic"})
 
     def test_load_profiles_on_a_missing_directory_is_empty(self) -> None:
         self.assertEqual(load_profiles(self.root / "nope"), {})
 
     def test_load_profile_reports_a_missing_file(self) -> None:
         with self.assertRaises(ConfigValidationError):
-            load_profile("data-ml-ai", profile_dir=self.profile_dir)
+            load_profile("missing", profile_dir=self.profile_dir)
 
     def test_targets_path_falls_back_to_the_bundled_fixture(self) -> None:
-        profile = load_profile("ios", profile_dir=self.profile_dir)
+        profile = load_profile("generic", profile_dir=self.profile_dir)
 
         self.assertTrue(str(profile.targets_path).endswith("provider_targets.toml"))
 
@@ -225,6 +272,7 @@ class ProfileLoadingTests(unittest.TestCase):
 class ValidateProfileConfigTests(unittest.TestCase):
     def valid(self) -> dict:
         return {
+            "schema_version": 1,
             "profile": {
                 "slug": "ios",
                 "name": "iOS/macOS",
@@ -236,7 +284,7 @@ class ValidateProfileConfigTests(unittest.TestCase):
                 "profile_files": ["profile/CV_SOURCE.md"],
                 "evaluation_notes": ["Senior iOS roles only."],
                 "email_to": " me@example.com ",
-            }
+            },
         }
 
     def test_valid_profile_is_normalized(self) -> None:
@@ -251,6 +299,24 @@ class ValidateProfileConfigTests(unittest.TestCase):
         data["profile"]["email_to"] = "   "
 
         self.assertIsNone(validate_profile_config(data)["email_to"])
+
+    def test_versionless_profile_is_accepted_with_a_deprecation_warning(self) -> None:
+        data = self.valid()
+        data.pop("schema_version")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            validated = validate_profile_config(data)
+
+        self.assertEqual(validated["slug"], "ios")
+        self.assertTrue(any(item.category is DeprecationWarning for item in caught))
+
+    def test_unknown_profile_schema_version_is_rejected(self) -> None:
+        data = self.valid()
+        data["schema_version"] = 2
+
+        with self.assertRaises(ConfigValidationError):
+            validate_profile_config(data)
 
     def test_profile_files_must_be_an_array(self) -> None:
         data = self.valid()
@@ -286,7 +352,9 @@ class PlaceholderScanTests(unittest.TestCase):
 
     def test_resolved_files_produce_no_issues(self) -> None:
         (self.root / "profile").mkdir()
-        (self.root / "profile" / "cv.md").write_text("Dmytro — iOS engineer", encoding="utf-8")
+        (self.root / "profile" / "cv.md").write_text(
+            "Fictitious candidate — software engineer", encoding="utf-8"
+        )
 
         self.assertEqual(scan_profile_placeholders(["profile/cv.md"], root=self.root), [])
 

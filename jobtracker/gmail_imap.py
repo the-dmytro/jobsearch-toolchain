@@ -5,9 +5,9 @@ from .mail.generic.imap import GmailImapClient, MailImapClient, resolve_mail_fol
 from .mail.registry import (
     GMAIL_LABEL_ALIASES,
     MAIL_FOLDER_ALIASES,
+    ProviderFilterResult,
     filter_provider_messages,
     message_matches_provider,
-    ProviderFilterResult,
 )
 
 __all__ = [

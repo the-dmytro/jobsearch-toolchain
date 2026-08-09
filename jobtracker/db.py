@@ -22,7 +22,7 @@ def require_psycopg():
         from psycopg.rows import dict_row
     except ImportError as exc:
         raise MissingDependencyError(
-            "psycopg is required for DB commands. Install dependencies with `python3 -m pip install -r requirements.txt`."
+            "psycopg is required for PostgreSQL commands. Install it with `python3 -m pip install -e '.[postgres]'`."
         ) from exc
     return psycopg, dict_row
 
@@ -49,9 +49,15 @@ def _connect_error_message(setting_name: str, db_url: str, error: BaseException)
     kind = _connection_kind(db_url)
     if "password authentication failed" in message:
         return f"{setting_name} reached {kind}, but authentication failed. Verify the database password and percent-encode URL-special characters in the connection string."
-    if any(marker in message for marker in ("failed to resolve host", "nodename nor servname", "Name or service not known")):
+    if any(
+        marker in message
+        for marker in ("failed to resolve host", "nodename nor servname", "Name or service not known")
+    ):
         return f"{setting_name} cannot resolve {kind}. Verify the host and network/DNS access."
-    if any(marker in message for marker in ("No route to host", "Network is unreachable", "Connection refused", "timeout expired")):
+    if any(
+        marker in message
+        for marker in ("No route to host", "Network is unreachable", "Connection refused", "timeout expired")
+    ):
         if "Supabase direct database endpoint" in kind:
             return (
                 f"{setting_name} uses {kind}, which may be IPv6-only from this network. "
@@ -84,12 +90,16 @@ def connect() -> Iterator[Any]:
 def connect_test() -> Iterator[Any]:
     settings = load_settings()
     if not settings.test_db_url:
-        raise MissingConfigurationError("SUPABASE_TEST_DB_URL is required for DB integration tests. Tests never fall back to SUPABASE_DB_URL.")
+        raise MissingConfigurationError(
+            "SUPABASE_TEST_DB_URL is required for DB integration tests. Tests never fall back to SUPABASE_DB_URL."
+        )
     if settings.db_url and settings.test_db_url == settings.db_url:
         raise MissingConfigurationError("SUPABASE_TEST_DB_URL must not be the same as SUPABASE_DB_URL.")
     host = _host_from_db_url(settings.test_db_url)
     if host not in {"127.0.0.1", "localhost"}:
-        raise MissingConfigurationError("SUPABASE_TEST_DB_URL must point to the local Supabase test database for write integration tests.")
+        raise MissingConfigurationError(
+            "SUPABASE_TEST_DB_URL must point to the local Supabase test database for write integration tests."
+        )
     with connect_url(settings.test_db_url, "SUPABASE_TEST_DB_URL") as conn:
         yield conn
 

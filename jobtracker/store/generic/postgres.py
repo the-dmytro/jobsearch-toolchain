@@ -83,8 +83,19 @@ def _artifact(conn: Any, report_path: str | None, provider_slug: str, run_key: s
 def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> str:
     company = item.get("company") or item.get("organization") or item.get("client")
     organization_id = _organization(conn, company, {"last_payload_company": company})
-    title = normalize_space(item.get("title") or item.get("role_title") or item.get("job_title")) or "[UNKNOWN ROLE]"
-    external_id = normalize_space(item.get("external_id") or item.get("provider_external_id") or item.get("linkedin_job_id") or item.get("upwork_job_id")) or None
+    title = (
+        normalize_space(item.get("title") or item.get("role_title") or item.get("job_title"))
+        or "[UNKNOWN ROLE]"
+    )
+    external_id = (
+        normalize_space(
+            item.get("external_id")
+            or item.get("provider_external_id")
+            or item.get("linkedin_job_id")
+            or item.get("upwork_job_id")
+        )
+        or None
+    )
     source_url = normalize_space(item.get("source_url") or item.get("job_url") or item.get("url")) or None
     apply_url = normalize_space(item.get("apply_url") or item.get("application_url")) or source_url
     location = normalize_space(item.get("location") or item.get("location_text")) or None
@@ -126,10 +137,14 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
             apply_url,
             location,
             normalize_space(item.get("work_model")) or None,
-            normalize_space(item.get("engagement_type") or item.get("employment_type") or item.get("job_type")) or None,
+            normalize_space(
+                item.get("engagement_type") or item.get("employment_type") or item.get("job_type")
+            )
+            or None,
             normalize_space(item.get("seniority")) or None,
             normalize_space(item.get("domain") or item.get("company_domain")) or None,
-            normalize_space(item.get("compensation_text") or item.get("salary_listed") or item.get("budget")) or None,
+            normalize_space(item.get("compensation_text") or item.get("salary_listed") or item.get("budget"))
+            or None,
             normalize_space(item.get("compensation_currency") or item.get("currency")) or None,
             normalize_space(item.get("budget_type")) or None,
             normalize_space(item.get("source_status")) or "seen",
@@ -149,10 +164,16 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
                 apply_url,
                 location,
                 normalize_space(item.get("work_model")) or None,
-                normalize_space(item.get("engagement_type") or item.get("employment_type") or item.get("job_type")) or None,
+                normalize_space(
+                    item.get("engagement_type") or item.get("employment_type") or item.get("job_type")
+                )
+                or None,
                 normalize_space(item.get("seniority")) or None,
                 normalize_space(item.get("domain") or item.get("company_domain")) or None,
-                normalize_space(item.get("compensation_text") or item.get("salary_listed") or item.get("budget")) or None,
+                normalize_space(
+                    item.get("compensation_text") or item.get("salary_listed") or item.get("budget")
+                )
+                or None,
                 normalize_space(item.get("compensation_currency") or item.get("currency")) or None,
                 normalize_space(item.get("budget_type")) or None,
                 normalize_space(item.get("source_status")) or "seen",
@@ -209,7 +230,9 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
         return cur.fetchone()["id"]
 
 
-def _insert_source_item(conn: Any, provider_id: str, run_id: str, item: dict[str, Any], opportunity_id: str | None = None) -> str:
+def _insert_source_item(
+    conn: Any, provider_id: str, run_id: str, item: dict[str, Any], opportunity_id: str | None = None
+) -> str:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -238,7 +261,9 @@ def _insert_source_item(conn: Any, provider_id: str, run_id: str, item: dict[str
                 normalize_space(item.get("source_type")) or "automation_source",
                 normalize_space(item.get("external_id") or item.get("message_id") or item.get("id")) or None,
                 normalize_space(item.get("source_url") or item.get("url") or item.get("gmail_link")) or None,
-                parse_timestamp(item.get("timestamp") or item.get("source_timestamp") or item.get("email_date")),
+                parse_timestamp(
+                    item.get("timestamp") or item.get("source_timestamp") or item.get("email_date")
+                ),
                 normalize_space(item.get("title") or item.get("subject")) or None,
                 normalize_space(item.get("summary") or item.get("snippet")) or None,
                 item.get("raw_text"),
@@ -287,7 +312,9 @@ def _link_source_item(conn: Any, provider_id: str, run_id: str, external_id: str
         return cur.fetchone()["id"]
 
 
-def _insert_evaluation(conn: Any, provider_id: str, run_id: str, opportunity_id: str, evaluation: dict[str, Any]) -> str:
+def _insert_evaluation(
+    conn: Any, provider_id: str, run_id: str, opportunity_id: str, evaluation: dict[str, Any]
+) -> str:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -358,7 +385,9 @@ def _insert_application(conn: Any, provider_id: str, opportunity_id: str, applic
         return cur.fetchone()["id"]
 
 
-def _upsert_run_payload(conn: Any, provider_slug: str, payload_path: str | Path, report_path: str | None = None) -> UpsertResult:
+def _upsert_run_payload(
+    conn: Any, provider_slug: str, payload_path: str | Path, report_path: str | None = None
+) -> UpsertResult:
     payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
     provider_slug = slugify(provider_slug)
     validation = validate_payload(payload, provider=provider_slug)
@@ -456,14 +485,31 @@ def _upsert_run_payload(conn: Any, provider_slug: str, payload_path: str | Path,
     return UpsertResult(run_key=run_key, opportunities=opportunity_count, evaluations=evaluation_count)
 
 
-def _check_duplicates(conn: Any, provider_slug: str, company: str | None, title: str | None, external_id: str | None = None) -> list[dict[str, Any]]:
+def _check_duplicates(
+    conn: Any, provider_slug: str, company: str | None, title: str | None, external_id: str | None = None
+) -> list[dict[str, Any]]:
     provider_slug = slugify(provider_slug)
     normalized_company = normalize_name(company)
     normalized_title = normalize_name(title)
-    normalized_external_id = validate_payload(
-        {"run": {"run_key": f"{provider_slug}-duplicate-check"}, "opportunities": [{"title": title or "[unknown]", "external_id": external_id or "", "source_url": external_id or ""}]},
-        provider=provider_slug,
-    ).normalized["opportunities"][0].get("external_id") if external_id else None
+    normalized_external_id = (
+        validate_payload(
+            {
+                "run": {"run_key": f"{provider_slug}-duplicate-check"},
+                "opportunities": [
+                    {
+                        "title": title or "[unknown]",
+                        "external_id": external_id or "",
+                        "source_url": external_id or "",
+                    }
+                ],
+            },
+            provider=provider_slug,
+        )
+        .normalized["opportunities"][0]
+        .get("external_id")
+        if external_id
+        else None
+    )
     rows: list[dict[str, Any]] = []
     with conn.cursor() as cur:
         if normalized_external_id:
@@ -652,7 +698,9 @@ def _export_application_summary(conn: Any, application_id: str) -> str:
     if not events:
         lines.append("- [No events recorded]")
     for event in events:
-        lines.append(f"- {event.get('event_at') or '[No date]'}: {event.get('event_type')} - {event.get('title') or event.get('description') or ''}")
+        lines.append(
+            f"- {event.get('event_at') or '[No date]'}: {event.get('event_type')} - {event.get('title') or event.get('description') or ''}"
+        )
     return "\n".join(lines)
 
 
@@ -696,4 +744,3 @@ class PostgresJobStore:
 
     def export_application_summary(self, application_id: str) -> str:
         return _export_application_summary(self.conn, application_id)
-

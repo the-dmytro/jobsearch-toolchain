@@ -8,7 +8,6 @@ from typing import Any
 from ...utils import normalize_space
 from ..base import AlertParser
 
-
 _JOB_CARD_RE = re.compile(
     r"(?:^|\s)-{5,}\s+(?P<title>[^:]{3,220}?):\s*"
     r"(?P<url>https://www\.upwork\.com/jobs/~(?P<external_id>[A-Za-z0-9]+)[^\s]*)",
@@ -28,7 +27,16 @@ _CLIENT_ECONOMICS_RE = re.compile(
 _SKILLS_RE = re.compile(r"Skills:\s*(?P<value>.*?)(?:\s+Payment\s+(?:verified|unverified)|$)", re.IGNORECASE)
 _SKILL_NAME_RE = re.compile(r"(?:^|\s)(?P<name>[A-Za-z][A-Za-z0-9+/#& .-]{1,80}?):(?=\s|$)", re.IGNORECASE)
 
-_UPWORK_ALERT_TERMS = ("job", "jobs", "saved search", "recommended", "recommendation", "invite", "invitation", "opportunity")
+_UPWORK_ALERT_TERMS = (
+    "job",
+    "jobs",
+    "saved search",
+    "recommended",
+    "recommendation",
+    "invite",
+    "invitation",
+    "opportunity",
+)
 
 
 def parse_upwork_alert_payload(
@@ -49,7 +57,9 @@ def parse_upwork_alert_payload(
         source_summary = _source_summary(source, parsed_cards)
         source_items.append(source_summary)
         if not parsed_cards:
-            source_name = source_summary.get("external_id") or source_summary.get("subject") or "[unknown source]"
+            source_name = (
+                source_summary.get("external_id") or source_summary.get("subject") or "[unknown source]"
+            )
             blockers.append(f"No deterministic Upwork job card parsed from {source_name}")
             continue
         for card in parsed_cards:
@@ -96,7 +106,7 @@ def parse_upwork_source_item(source: dict[str, Any]) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     for index, match in enumerate(matches):
         next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        segment = text[match.end():next_start]
+        segment = text[match.end() : next_start]
         title = _best_title(match.group("title"), source.get("subject"))
         budget = _budget(segment)
         estimated_time = _regex_value(_ESTIMATED_TIME_RE, segment)
@@ -154,7 +164,9 @@ def message_matches_upwork(message: dict[str, Any]) -> bool:
     return upwork_context and alert_context
 
 
-def _opportunity_from_card(card: dict[str, Any], source: dict[str, Any], source_summary: dict[str, Any]) -> dict[str, Any]:
+def _opportunity_from_card(
+    card: dict[str, Any], source: dict[str, Any], source_summary: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "external_id": card["external_id"],
         "title": card["title"],
@@ -192,10 +204,16 @@ def _source_summary(source: dict[str, Any], cards: list[dict[str, Any]]) -> dict
     return {
         "source_type": normalize_space(source.get("source_type")) or "email",
         "external_id": external_id,
-        "source_url": first_card.get("title_link") or normalize_space(source.get("source_url") or source.get("url")) or None,
-        "timestamp": normalize_space(source.get("timestamp") or source.get("email_date") or source.get("source_timestamp")) or None,
+        "source_url": first_card.get("title_link")
+        or normalize_space(source.get("source_url") or source.get("url"))
+        or None,
+        "timestamp": normalize_space(
+            source.get("timestamp") or source.get("email_date") or source.get("source_timestamp")
+        )
+        or None,
         "subject": normalize_space(source.get("subject") or source.get("title")) or None,
-        "summary": normalize_space(source.get("subject") or source.get("summary") or source.get("snippet")) or None,
+        "summary": normalize_space(source.get("subject") or source.get("summary") or source.get("snippet"))
+        or None,
         "metadata": {
             "parsed_upwork_cards": len(cards),
             "parser": "deterministic_upwork_email_parser",

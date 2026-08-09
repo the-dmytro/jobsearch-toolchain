@@ -1,88 +1,25 @@
 # Writing a store connector
 
-Stores persist automation payloads and artifacts.
+Built-ins are `sqlite` (default), `postgres`, and `memory`. A plugin uses `jobtracker.stores` and a factory accepting `ConnectorBuildContext`.
 
-## Built-in backends
-
-| Backend | Config | Use case |
-|---------|--------|----------|
-| `postgres` | `JOBTRACKER_DATABASE_URL` | Production (Supabase, RDS, local) |
-| `sqlite` | `store.sqlite_path` | Zero-config local dev |
-| `memory` | — | Tests, `--dry-run` |
-
-**`config/jobsearch.toml`:**
-
-```toml
-[store]
-backend = "postgres"
-artifact_backend = "local"
-artifact_local_path = "outputs/artifacts"
-```
-
-## JobStore protocol
+Every store implements exactly:
 
 ```python
-class JobStore(Protocol):
-    def upsert_run(self, payload: RunPayload) -> UpsertResult: ...
-    def check_duplicates(self, provider: str, external_id: str) -> list[DuplicateMatch]: ...
-    def known_refs(self, provider: str) -> frozenset[str]: ...
-    def migrate(self) -> list[str]: ...
+upsert_run_payload(provider_slug: str, payload_path: str, report_path: str | None = None) -> UpsertResult
+check_duplicates(provider_slug: str, company: str | None, title: str | None, external_id: str | None = None) -> list[DuplicateMatch]
+export_application_summary(application_id: str) -> str
 ```
 
-Postgres implementation: `jobtracker/store/generic/postgres.py` (SQL from original `payloads.py`).
-
-## Artifact stores
-
-| Backend | Env / config |
-|---------|----------------|
-| `local` | `artifact_local_path` |
-| `s3` | `AWS_*` or compatible endpoint |
-| `supabase-storage` | `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET` |
-
-## Custom store (out-of-tree)
+Writes must be idempotent by `run.run_key`. Canonical JSON payload files remain the replay boundary.
 
 ```toml
 [project.entry-points."jobtracker.stores"]
-mydb = "my_store_plugin.postgres:MyPostgresStore"
+private_store = "private_store.plugin:build_store"
 ```
 
 ```python
-from jobtracker.store.base import JobStore, UpsertResult
-
-class MyPostgresStore:
-  def upsert_run(self, payload):
-    # implement against your schema or adapt payload mapping
-    return UpsertResult(run_id="...", created=True)
+def build_store(context):
+    return PrivateStore(root=context.root, options=dict(context.options))
 ```
 
-Register in config:
-
-```toml
-[store]
-backend = "mydb"
-```
-
-## Migrations
-
-SQL migrations live in `db/migrations/`. Apply with:
-
-```bash
-python -m jobtracker migrate
-python -m jobtracker migrate --dry-run   # list pending
-```
-
-Migration tracking is by **filename** — safe to edit applied migrations only if you understand downstream impact.
-
-## Testing
-
-Use `MemoryJobStore` from `jobtracker/store/generic/memory.py`:
-
-```python
-from jobtracker.store.generic.memory import MemoryJobStore
-
-store = MemoryJobStore()
-result = store.upsert_run(payload_dict)
-assert result.created
-```
-
-See `tests/test_connector_contract.py`.
+Install from a local path or Git URL and set `[store].backend = "private_store"` in ignored config. Contract tests must cover upsert/replay, both duplicate lookup forms, export, unavailable dependencies, and secret-safe errors.

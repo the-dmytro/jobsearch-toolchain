@@ -11,7 +11,7 @@ DB-first UI for the `jobtracker` Supabase schema: dashboard, applications (list 
 
 ## Environment
 
-Copy [`.env.example`](.env.example) to `crm/.env.local` (or use root `.env` for monorepo).
+Copy [`.env.example`](../.env.example) to `crm/.env.local` (or use root `.env` for monorepo).
 
 | Variable | Client | Server | Notes |
 |----------|--------|--------|--------|

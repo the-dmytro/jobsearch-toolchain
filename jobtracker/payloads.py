@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from .store.generic.postgres import PostgresJobStore
 
 
-def upsert_run_payload(conn: Any, provider_slug: str, payload_path: str | Path, report_path: str | None = None) -> dict[str, Any]:
+def upsert_run_payload(
+    conn: Any, provider_slug: str, payload_path: str | Path, report_path: str | None = None
+) -> dict[str, Any]:
     result = PostgresJobStore(conn).upsert_run_payload(provider_slug, payload_path, report_path=report_path)
     return {
         "run_key": result.run_key,

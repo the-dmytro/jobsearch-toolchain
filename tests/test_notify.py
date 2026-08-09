@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,28 @@ class NotifyTests(unittest.TestCase):
         notifier = build_notifier("email", {"to": "ops@example.com"})
         self.assertIsInstance(notifier, EmailNotifier)
         self.assertEqual(notifier.to, "ops@example.com")
+
+    def test_notifier_options_can_reference_environment_variables(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "FIXTURE_REPORT_TO": "reports@example.com",
+                "FIXTURE_WEBHOOK": "https://hooks.example.com/fixture",
+                "FIXTURE_BOT_TOKEN": "fixture-token",
+                "FIXTURE_CHAT_ID": "fixture-chat",
+            },
+        ):
+            email = build_notifier("email", {"to_env": "FIXTURE_REPORT_TO"})
+            webhook = build_notifier("webhook", {"url_env": "FIXTURE_WEBHOOK"})
+            telegram = build_notifier(
+                "telegram",
+                {"bot_token_env": "FIXTURE_BOT_TOKEN", "chat_id_env": "FIXTURE_CHAT_ID"},
+            )
+
+        self.assertEqual(email.to, "reports@example.com")
+        self.assertEqual(webhook.url, "https://hooks.example.com/fixture")
+        self.assertEqual(telegram.bot_token, "fixture-token")
+        self.assertEqual(telegram.chat_id, "fixture-chat")
 
     def test_build_notifier_webhook(self) -> None:
         notifier = build_notifier("webhook", {"url": "https://example.com/hook"})

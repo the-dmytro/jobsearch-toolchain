@@ -10,8 +10,34 @@ from ..base import DuplicateMatch, UpsertResult
 class MemoryJobStore:
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, Any]] = {}
-        self.opportunities: list[dict[str, Any]] = []
+        self._opportunities_by_run: dict[str, list[dict[str, Any]]] = {}
         self.duplicates: dict[tuple[str, str], list[DuplicateMatch]] = {}
+
+    @property
+    def opportunities(self) -> list[dict[str, Any]]:
+        return [item for items in self._opportunities_by_run.values() for item in items]
+
+    def _rebuild_duplicates(self) -> None:
+        self.duplicates = {}
+        for run_key, run in self.runs.items():
+            provider_slug = str(run["provider"])
+            for opportunity in self._opportunities_by_run.get(run_key, []):
+                external_id = str(opportunity.get("external_id") or "").strip()
+                if not external_id:
+                    continue
+                match = DuplicateMatch(
+                    match_type="external_id",
+                    opportunity_id=str(opportunity.get("id") or external_id),
+                    company=opportunity.get("company"),
+                    title=opportunity.get("title"),
+                    source_url=opportunity.get("source_url"),
+                    apply_url=opportunity.get("apply_url"),
+                )
+                self.duplicates.setdefault((provider_slug, external_id), []).append(match)
+                company = str(opportunity.get("company") or "").strip().lower()
+                title = str(opportunity.get("title") or "").strip().lower()
+                if company and title:
+                    self.duplicates.setdefault((provider_slug, f"title:{company}:{title}"), []).append(match)
 
     def upsert_run_payload(
         self,
@@ -29,25 +55,8 @@ class MemoryJobStore:
             "payload": payload,
             "report_path": report_path,
         }
-        self.opportunities.extend(opportunities)
-        for opportunity in opportunities:
-            external_id = str(opportunity.get("external_id") or "").strip()
-            if not external_id:
-                continue
-            key = (provider_slug, external_id)
-            match = DuplicateMatch(
-                match_type="external_id",
-                opportunity_id=str(opportunity.get("id") or external_id),
-                company=opportunity.get("company"),
-                title=opportunity.get("title"),
-                source_url=opportunity.get("source_url"),
-                apply_url=opportunity.get("apply_url"),
-            )
-            self.duplicates.setdefault(key, []).append(match)
-            company = str(opportunity.get("company") or "").strip().lower()
-            title = str(opportunity.get("title") or "").strip().lower()
-            if company and title:
-                self.duplicates.setdefault((provider_slug, f"title:{company}:{title}"), []).append(match)
+        self._opportunities_by_run[run_key] = list(opportunities)
+        self._rebuild_duplicates()
         return UpsertResult(run_key=run_key, opportunities=len(opportunities), evaluations=evaluations)
 
     def check_duplicates(

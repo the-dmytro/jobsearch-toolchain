@@ -84,6 +84,14 @@ class LiveFetcherTests(unittest.TestCase):
 
 
 class ConfigAndDbHelperTests(unittest.TestCase):
+    def test_load_settings_defaults_to_local_storage(self) -> None:
+        with mock.patch("jobtracker.config.load_env_file"):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                settings = load_settings()
+
+        self.assertEqual(settings.store_backend, "sqlite")
+        self.assertEqual(settings.artifact_backend, "local")
+
     def test_load_settings_reads_env(self) -> None:
         with mock.patch.dict(
             os.environ,

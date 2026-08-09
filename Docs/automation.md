@@ -1,58 +1,22 @@
 # Automation
 
-## Pipelines
+Automation is optional and is configured only after manual and local SQLite runs succeed. See [the automation onboarding chapter](onboarding/AUTOMATION.md) and the parameterized [agent playbooks](playbooks/).
 
-Define pipelines in `config/jobsearch.toml`:
+Configured pipelines use named TOML tables:
 
 ```toml
-[[pipelines]]
-name = "jobboards"
-profile = "ios"
-sources = ["dou", "workua", "djinni"]
-notify = ["email"]
+[pipelines.jobboards]
+type = "jobboard"
+profile = "generic"
+providers = ["example_jsonld"]
+include_db = true
 ```
 
-Run:
+Run manually:
 
 ```bash
-python -m jobtracker run jobboards
-python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
+.venv/bin/python -m jobtracker run jobboards --dry-run
+.venv/bin/python -m jobtracker run jobboards
 ```
 
-Pipeline steps: **source → dedupe → store → notify**
-
-## Manual commands
-
-| Command | Purpose |
-|---------|---------|
-| `fetch-dou` / `fetch-workua` / `fetch-djinni` / `fetch-greenhouse-jobs` | Single-source discovery |
-| `fetch-mail-folder --provider upwork` | IMAP fetch |
-| `parse-upwork-alerts` | Deterministic email parse |
-| `upsert-run --payload ...` | Persist automation payload |
-| `send-report-email` | SMTP report with idempotency |
-| `prepare-jobboard-run` | Multi-board triage manifest |
-
-## Agent playbooks
-
-DB-first automation instructions for AI agents:
-
-- [LinkedIn triage](playbooks/linkedin_job_triage_instruction.md)
-- [Upwork evaluator](playbooks/UPWORK_EVALUATOR.md)
-- [UA job boards](playbooks/UA_JOBBOARDS_TRIAGE.md)
-- [Gmail setup](playbooks/GMAIL_JOB_EMAIL_SETUP.md)
-
-Playbooks reference `profile/` files and `{{REPORT_EMAIL}}` — fill templates before use.
-
-## Scheduling examples
-
-- [cron.example](../examples/automation/cron.example)
-- [launchd.example.plist](../examples/automation/launchd.example.plist)
-- [github-actions.example.yml](../examples/automation/github-actions.example.yml)
-
-## Payload contract
-
-All automation runs produce JSON matching [AUTOMATION_PAYLOAD_CONTRACT.md](DB/AUTOMATION_PAYLOAD_CONTRACT.md). Validate before upsert:
-
-```bash
-python -m jobtracker validate-payload --provider upwork --payload outputs/automation-payloads/run.payload.json
-```
+Select cadence, time zone, retry rules, and delivery channels with the user. Do not copy a schedule into an active system until those choices and a live connector smoke test are confirmed.

@@ -12,7 +12,6 @@ from jobtracker.greenhouse_import import (
     summarize_greenhouse_tracking,
 )
 
-
 HEADER = [
     "stage",
     "company",
@@ -116,7 +115,10 @@ class GreenhouseImportTests(unittest.TestCase):
         self.assertEqual(summary["application_statuses"]["declined"], 1)
 
     def test_greenhouse_application_id_from_url(self) -> None:
-        self.assertEqual(greenhouse_application_id_from_url("https://my.greenhouse.io/applications/44804184?x=1"), "44804184")
+        self.assertEqual(
+            greenhouse_application_id_from_url("https://my.greenhouse.io/applications/44804184?x=1"),
+            "44804184",
+        )
 
 
 if __name__ == "__main__":
