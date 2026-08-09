@@ -415,7 +415,14 @@ class CsvSourceTests(GenericSourceTestCase):
 class GenericSourceContractTests(GenericSourceTestCase):
     def test_every_generic_source_reports_empty_health(self) -> None:
         ctx = self.context(routes={}, options={})
-        for source in (RssSource(), JsonLdSource(), HtmlSource(), JsonApiSource(), SitemapSource(), CsvSource()):
+        for source in (
+            RssSource(),
+            JsonLdSource(),
+            HtmlSource(),
+            JsonApiSource(),
+            SitemapSource(),
+            CsvSource(),
+        ):
             with self.subTest(source=source.slug):
                 self.assertEqual(source.health(ctx), [])
 

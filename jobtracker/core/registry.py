@@ -40,14 +40,14 @@ class Registry(Generic[T]):
             return self._items[key]
         except KeyError as exc:
             available = ", ".join(sorted(self._items)) or "(none)"
-            raise UnknownConnectorError(
-                f"Unknown {self._name} {slug!r}. Available: {available}"
-            ) from exc
+            raise UnknownConnectorError(f"Unknown {self._name} {slug!r}. Available: {available}") from exc
 
     def all(self) -> dict[str, T]:
         return dict(self._items)
 
-    def load_entry_points(self, group: str, *, entry_point_loader: Callable[[EntryPoint], T] | None = None) -> None:
+    def load_entry_points(
+        self, group: str, *, entry_point_loader: Callable[[EntryPoint], T] | None = None
+    ) -> None:
         loader = entry_point_loader or (lambda entry_point: cast(T, entry_point.load()))
         for entry_point in _iter_entry_points(group):
             key = entry_point.name.strip().lower()

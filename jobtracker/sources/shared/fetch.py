@@ -30,7 +30,9 @@ def _require_httpx():
 
 
 class LiveFetcher:
-    def __init__(self, metrics: Any, timeout: float = DEFAULT_TIMEOUT_SECONDS, retries: int = DEFAULT_RETRIES) -> None:
+    def __init__(
+        self, metrics: Any, timeout: float = DEFAULT_TIMEOUT_SECONDS, retries: int = DEFAULT_RETRIES
+    ) -> None:
         httpx = _require_httpx()
         self._httpx = httpx
         self._metrics = metrics
@@ -101,7 +103,12 @@ class FixtureFetcher:
         path = parsed.path
         if "jobs.dou.ua" in host and "/feeds/" in path:
             return self._fixture_dir / "dou_feed.xml"
-        if "jobs.dou.ua" in host and "/vacancies/" in path and "feeds" not in path and "companies" not in path:
+        if (
+            "jobs.dou.ua" in host
+            and "/vacancies/" in path
+            and "feeds" not in path
+            and "companies" not in path
+        ):
             return self._fixture_dir / "dou_list.html"
         if "jobs.dou.ua" in host and "/companies/" in path and "/vacancies/" in path:
             return self._fixture_dir / "dou_detail.html"
@@ -121,4 +128,6 @@ class FixtureFetcher:
             return self._fixture_dir / "lever_default.json"
         if "api.ashbyhq.com" in host:
             return self._fixture_dir / "ashby_default.json"
+        if host.endswith("example.invalid"):
+            return self._fixture_dir / "example_jsonld.html"
         raise FileNotFoundError(f"No fixture mapped for {url}")

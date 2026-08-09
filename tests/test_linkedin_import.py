@@ -14,8 +14,17 @@ from jobtracker.linkedin_import import (
 )
 from jobtracker.url_tools import clean_url
 
-
-APP_HEADER = ["stage", "company", "role", "location", "work_model", "job_link", "applied_approx", "posting_status", "extra_info"]
+APP_HEADER = [
+    "stage",
+    "company",
+    "role",
+    "location",
+    "work_model",
+    "job_link",
+    "applied_approx",
+    "posting_status",
+    "extra_info",
+]
 
 
 class LinkedInImportTests(unittest.TestCase):
@@ -45,7 +54,9 @@ class LinkedInImportTests(unittest.TestCase):
                 }
             ],
         )
-        records, skipped = build_linkedin_application_records(active_path="missing.csv", archived_path=archived, as_of=date(2026, 4, 27))
+        records, skipped = build_linkedin_application_records(
+            active_path="missing.csv", archived_path=archived, as_of=date(2026, 4, 27)
+        )
         self.assertEqual(skipped, [])
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].status, "declined")
@@ -89,7 +100,9 @@ class LinkedInImportTests(unittest.TestCase):
                 }
             ],
         )
-        summary = summarize_linkedin_tracking(jobs_csv="missing.csv", active_csv=active, archived_csv=archived, as_of=date(2026, 4, 27))
+        summary = summarize_linkedin_tracking(
+            jobs_csv="missing.csv", active_csv=active, archived_csv=archived, as_of=date(2026, 4, 27)
+        )
         self.assertEqual(summary["application_rows"], 2)
         self.assertEqual(summary["active_application_rows"], 1)
         self.assertEqual(summary["archived_application_rows"], 1)
@@ -97,8 +110,18 @@ class LinkedInImportTests(unittest.TestCase):
         self.assertEqual(summary["application_statuses"]["declined"], 1)
 
     def test_linkedin_url_helpers(self) -> None:
-        self.assertEqual(linkedin_job_id_from_url("https://es.linkedin.com/jobs/view/senior-ios-developer-at-example-4397405467"), "4397405467")
-        self.assertEqual(clean_url("https://es.linkedin.com/jobs/view/senior-ios-developer-at-example-4397405467?trackingId=x"), "https://www.linkedin.com/jobs/view/4397405467/")
+        self.assertEqual(
+            linkedin_job_id_from_url(
+                "https://es.linkedin.com/jobs/view/senior-ios-developer-at-example-4397405467"
+            ),
+            "4397405467",
+        )
+        self.assertEqual(
+            clean_url(
+                "https://es.linkedin.com/jobs/view/senior-ios-developer-at-example-4397405467?trackingId=x"
+            ),
+            "https://www.linkedin.com/jobs/view/4397405467/",
+        )
         self.assertEqual(parse_applied_approx("3d ago", date(2026, 4, 27)).isoformat(), "2026-04-24")
 
 

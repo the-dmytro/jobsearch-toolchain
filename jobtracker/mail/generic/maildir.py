@@ -18,7 +18,9 @@ class MaildirInbox:
         for path in sorted(self.root.rglob("cur")):
             if path.parent != self.root and path.parent.name in {"cur", "new", "tmp"}:
                 continue
-            relative = path.parent.relative_to(self.root.parent if path.parent.parent == self.root else self.root)
+            relative = path.parent.relative_to(
+                self.root.parent if path.parent.parent == self.root else self.root
+            )
             folders.append(str(relative).replace("\\", "/"))
         return sorted(set(folders))
 
@@ -27,7 +29,9 @@ class MaildirInbox:
             return explicit_folder
         return self.root.name
 
-    def fetch_messages(self, folder: str, since: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    def fetch_messages(
+        self, folder: str, since: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         folder_path = self.root if folder == self.root.name else self.root / folder
         messages: list[dict[str, Any]] = []
         for subdir in ("cur", "new"):

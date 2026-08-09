@@ -4,18 +4,32 @@ import re
 from typing import Any
 
 from ...utils import normalize_name, normalize_space
-from ..base import AlertParser
 
 
 class RulesAlertParser:
-    def __init__(self, rules: dict[str, Any]) -> None:
-        self.sender_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("sender_patterns") or []]
-        self.subject_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("subject_patterns") or []]
-        self.body_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("body_patterns") or []]
-        self.link_url_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("link_url_patterns") or []]
-        self.exclude_sender_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_sender_patterns") or []]
-        self.exclude_subject_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_subject_patterns") or []]
-        self.exclude_body_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_body_patterns") or []]
+    def __init__(self, rules: dict[str, Any], *, slug: str | None = None) -> None:
+        self.slug = slug or str(rules.get("provider_slug") or "rules")
+        sender_patterns = rules.get("sender_patterns") or [
+            re.escape(str(value)) for value in rules.get("senders") or []
+        ]
+        self.sender_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in sender_patterns]
+        self.subject_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in rules.get("subject_patterns") or []
+        ]
+        self.body_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in rules.get("body_patterns") or []
+        ]
+        link_patterns = rules.get("link_url_patterns") or rules.get("link_patterns") or []
+        self.link_url_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in link_patterns]
+        self.exclude_sender_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_sender_patterns") or []
+        ]
+        self.exclude_subject_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_subject_patterns") or []
+        ]
+        self.exclude_body_patterns = [
+            re.compile(pattern, re.IGNORECASE) for pattern in rules.get("exclude_body_patterns") or []
+        ]
 
     def matches(self, message: dict[str, Any]) -> bool:
         sender = normalize_space(message.get("from"))
@@ -27,8 +41,12 @@ class RulesAlertParser:
             return False
         if any(pattern.search(body) for pattern in self.exclude_body_patterns):
             return False
-        sender_ok = not self.sender_patterns or any(pattern.search(sender) for pattern in self.sender_patterns)
-        subject_ok = not self.subject_patterns or any(pattern.search(subject) for pattern in self.subject_patterns)
+        sender_ok = not self.sender_patterns or any(
+            pattern.search(sender) for pattern in self.sender_patterns
+        )
+        subject_ok = not self.subject_patterns or any(
+            pattern.search(subject) for pattern in self.subject_patterns
+        )
         body_ok = not self.body_patterns or any(pattern.search(body) for pattern in self.body_patterns)
         links_ok = not self.link_url_patterns or any(
             pattern.search(link) for link in message.get("links") or [] for pattern in self.link_url_patterns
@@ -49,6 +67,8 @@ class RulesAlertParser:
             "subject": message.get("subject"),
             "timestamp": message.get("timestamp") or message.get("email_date"),
             "matched_links": matched_links,
+            "links": matched_links,
+            "provider_slug": str(message.get("provider_slug") or self.slug),
             "parser": "rules_alert_parser",
         }
 

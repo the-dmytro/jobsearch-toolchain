@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": 1001,
+      "absolute_url": "https://careers.example.invalid/jobs/1001",
+      "title": "Software Engineer",
+      "location": {"name": "Remote"},
+      "updated_at": "2026-04-20T09:00:00Z",
+      "content": "<p>Build and maintain a fictitious example service.</p>"
+    }
+  ]
+}

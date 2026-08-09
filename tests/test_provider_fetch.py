@@ -3,23 +3,19 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
 
 from jobtracker.provider_fetch import _matches_lane, benchmark_providers, collect_provider_run
 
-
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "jobtracker" / "fixtures" / "provider_fetch"
-DATA_ML_AI_TARGETS = Path(__file__).resolve().parent.parent / "jobtracker" / "fixtures" / "provider_targets_data_ml_ai.toml"
 NOW = datetime(2026, 4, 29, 9, 0, tzinfo=timezone.utc)
 
 
 class ProviderFetchTests(unittest.TestCase):
-    def test_data_ml_ai_targets_exclude_senior_domain_roles(self) -> None:
-        targets = tomllib.loads(DATA_ML_AI_TARGETS.read_text(encoding="utf-8"))
-        lane = targets["role_lane"]
+    def test_lane_rules_can_exclude_senior_domain_roles(self) -> None:
+        lane = {
+            "include_terms": ["data engineer", "python engineer"],
+            "exclude_terms": ["senior data", "senior python"],
+        }
 
         self.assertFalse(_matches_lane("Senior Python Engineer", lane))
         self.assertFalse(_matches_lane("Senior ML Engineer", lane))
@@ -28,7 +24,9 @@ class ProviderFetchTests(unittest.TestCase):
         self.assertTrue(_matches_lane("Junior Data Engineer", lane))
 
     def test_dou_fixture_run_parses_and_enriches_one_ios_job(self) -> None:
-        result = collect_provider_run("dou", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1)
+        result = collect_provider_run(
+            "dou", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
+        )
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(result.candidates), 1)
@@ -41,7 +39,9 @@ class ProviderFetchTests(unittest.TestCase):
         self.assertEqual(candidate.compensation_text, "EUR 85000")
 
     def test_workua_fixture_run_parses_numeric_job_id(self) -> None:
-        result = collect_provider_run("workua", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1)
+        result = collect_provider_run(
+            "workua", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
+        )
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(result.candidates), 1)
@@ -52,7 +52,9 @@ class ProviderFetchTests(unittest.TestCase):
         self.assertEqual(candidate.seniority, "Junior")
 
     def test_djinni_fixture_run_uses_json_ld(self) -> None:
-        result = collect_provider_run("djinni", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1)
+        result = collect_provider_run(
+            "djinni", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
+        )
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(result.candidates), 1)

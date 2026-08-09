@@ -12,7 +12,6 @@ from .linkedin_import import read_csv_rows
 from .url_tools import clean_url
 from .utils import json_default, normalize_name, normalize_space, sha256_text
 
-
 DEFAULT_TRACKING_DIR = Path("Docs/Tracking")
 DEFAULT_GREENHOUSE_CSV = DEFAULT_TRACKING_DIR / "greenhouse.csv"
 
@@ -70,7 +69,9 @@ def _parse_applied_approx(value: str | None, as_of: date) -> date | None:
     return parse_applied_approx(value, as_of)
 
 
-def _application_status_from_posting_status(posting_status: str | None, extra_info: str | None) -> tuple[str, str, str | None, str | None]:
+def _application_status_from_posting_status(
+    posting_status: str | None, extra_info: str | None
+) -> tuple[str, str, str | None, str | None]:
     status_text = normalize_space(posting_status)
     normalized = normalize_name(status_text)
     info = normalize_space(extra_info)
@@ -100,14 +101,27 @@ def build_greenhouse_application_records(
         company = normalize_space(row.get("company"))
         title = normalize_space(row.get("role") or row.get("role_title") or row.get("title"))
         if not company or not title:
-            skipped.append({"source_file": str(csv_path), "row_number": row_number, "reason": "missing_company_or_title", "row": row})
+            skipped.append(
+                {
+                    "source_file": str(csv_path),
+                    "row_number": row_number,
+                    "reason": "missing_company_or_title",
+                    "row": row,
+                }
+            )
             continue
 
         application_url = clean_url(row.get("application_link"))
         application_id = greenhouse_application_id_from_url(application_url or row.get("application_link"))
-        external_id = f"application:{application_id}" if application_id else sha256_text(f"{csv_path}|{row_number}|{company}|{title}")[:16]
+        external_id = (
+            f"application:{application_id}"
+            if application_id
+            else sha256_text(f"{csv_path}|{row_number}|{company}|{title}")[:16]
+        )
         extra_info = _clean_optional(row.get("extra_info"))
-        status, current_stage, outcome, decline_reason = _application_status_from_posting_status(row.get("posting_status"), extra_info)
+        status, current_stage, outcome, decline_reason = _application_status_from_posting_status(
+            row.get("posting_status"), extra_info
+        )
 
         records.append(
             GreenhouseApplicationRecord(
@@ -134,7 +148,9 @@ def build_greenhouse_application_records(
     return records, skipped
 
 
-def summarize_greenhouse_tracking(path: str | Path | None = None, as_of: date | None = None) -> dict[str, Any]:
+def summarize_greenhouse_tracking(
+    path: str | Path | None = None, as_of: date | None = None
+) -> dict[str, Any]:
     records, skipped = build_greenhouse_application_records(path, as_of=as_of)
     source_statuses = Counter(record.source_status or "[blank]" for record in records)
     application_statuses = Counter(record.status for record in records)
@@ -142,9 +158,13 @@ def summarize_greenhouse_tracking(path: str | Path | None = None, as_of: date | 
         "application_rows": len(records),
         "active_rows": source_statuses.get("active", 0),
         "inactive_rows": source_statuses.get("inactive", 0),
-        "declined_from_inactive_rows": sum(1 for record in records if record.source_status == "inactive" and record.status == "declined"),
+        "declined_from_inactive_rows": sum(
+            1 for record in records if record.source_status == "inactive" and record.status == "declined"
+        ),
         "linked_rows": sum(1 for record in records if record.application_url),
-        "rows_with_greenhouse_application_id": sum(1 for record in records if record.greenhouse_application_id),
+        "rows_with_greenhouse_application_id": sum(
+            1 for record in records if record.greenhouse_application_id
+        ),
         "source_statuses": dict(source_statuses),
         "application_statuses": dict(application_statuses),
         "skipped_rows": len(skipped),
@@ -196,12 +216,18 @@ def _find_existing_opportunity(
 ) -> str | None:
     with conn.cursor() as cur:
         if external_id:
-            cur.execute("select id from opportunities where provider_id = %s and external_id = %s", (provider_id, external_id))
+            cur.execute(
+                "select id from opportunities where provider_id = %s and external_id = %s",
+                (provider_id, external_id),
+            )
             row = cur.fetchone()
             if row:
                 return row["id"]
         if source_url:
-            cur.execute("select id from opportunities where provider_id = %s and source_url = %s order by created_at asc limit 1", (provider_id, source_url))
+            cur.execute(
+                "select id from opportunities where provider_id = %s and source_url = %s order by created_at asc limit 1",
+                (provider_id, source_url),
+            )
             row = cur.fetchone()
             if row:
                 return row["id"]
@@ -323,7 +349,9 @@ def _upsert_opportunity(conn: Any, provider_id: str, record: GreenhouseApplicati
         return cur.fetchone()["id"]
 
 
-def _upsert_source_item(conn: Any, provider_id: str, opportunity_id: str, record: GreenhouseApplicationRecord) -> str:
+def _upsert_source_item(
+    conn: Any, provider_id: str, opportunity_id: str, record: GreenhouseApplicationRecord
+) -> str:
     metadata = _opportunity_metadata(record)
     with conn.cursor() as cur:
         cur.execute(
@@ -356,7 +384,9 @@ def _upsert_source_item(conn: Any, provider_id: str, opportunity_id: str, record
         return cur.fetchone()["id"]
 
 
-def _upsert_application(conn: Any, provider_id: str, opportunity_id: str, record: GreenhouseApplicationRecord) -> str:
+def _upsert_application(
+    conn: Any, provider_id: str, opportunity_id: str, record: GreenhouseApplicationRecord
+) -> str:
     metadata = {
         "greenhouse_import": True,
         "source_file": record.source_file,
@@ -447,7 +477,9 @@ def import_greenhouse_tracking(
     stats = {
         "applications": len(records),
         "active_applications": sum(1 for record in records if record.source_status == "active"),
-        "inactive_declined_applications": sum(1 for record in records if record.source_status == "inactive" and record.status == "declined"),
+        "inactive_declined_applications": sum(
+            1 for record in records if record.source_status == "inactive" and record.status == "declined"
+        ),
         "skipped": len(skipped),
         "warnings": skipped,
     }

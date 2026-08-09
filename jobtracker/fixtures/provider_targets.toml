@@ -1,49 +1,28 @@
 [role_lane]
-name = "iOS/macOS"
-include_terms = [
-  "ios",
-  "swiftui",
-  "iphone",
-  "apple platform",
-  "mobile ios",
-]
+name = "fictitious-software-roles"
+include_terms = ["engineer", "developer", "розробник"]
 exclude_terms = [
   "android",
-  "react native",
-  "flutter",
-  "qa",
-  "designer",
-  "product manager",
-  "project manager",
-  "recruiter",
-  "sales",
-  "support",
-  "backend",
-  "frontend",
-  "front end",
-  "full stack",
+  "intern",
+  "recruiter"
 ]
 
 [providers.dou]
-feed_url = "https://jobs.dou.ua/vacancies/feeds/?category=iOS%2FmacOS"
-listing_url = "https://jobs.dou.ua/vacancies/?category=iOS%2FmacOS"
+feed_url = "https://jobs.dou.ua/vacancies/feeds/"
+listing_url = "https://jobs.dou.ua/vacancies/"
 default_detail_limit = 10
 
 [providers.workua]
-listing_urls = ["https://www.work.ua/jobs-it-ios/"]
+listing_urls = ["https://www.work.ua/jobs-it/"]
 default_detail_limit = 10
 
 [providers.djinni]
-listing_url = "https://djinni.co/jobs/keyword-ios/"
+listing_url = "https://djinni.co/jobs/keyword-software-engineer/"
 default_detail_limit = 10
 experimental = true
 
 [providers.greenhouse]
-manual_board_tokens = [
-  "oura",
-  "robinhood",
-  "monzo",
-]
+manual_board_tokens = ["fixture"]
 denylist = []
 default_max_boards = 10
 

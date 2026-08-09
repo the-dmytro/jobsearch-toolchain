@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+
+@dataclass(frozen=True)
+class ConnectorBuildContext:
+    root: Path
+    slug: str
+    options: Mapping[str, Any]
 
 
 @dataclass

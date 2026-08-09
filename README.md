@@ -1,110 +1,54 @@
 # JobSearch Toolchain
 
-Open-source job-search automation: discover opportunities from job boards and email alerts, evaluate them against your profile, track applications in a database, and view analytics in a CRM dashboard.
-
-## Features
-
-- **Pluggable connectors** — general-purpose (RSS, JSON-LD, HTML, JSON API) and service-specific (DOU, Work.ua, Djinni, Greenhouse, Lever, Ashby, Upwork, LinkedIn)
-- **Mail pipeline** — IMAP fetch, deterministic parsers, SMTP reports
-- **Postgres storage** — plain PostgreSQL (Supabase is one supported host)
-- **Next.js CRM** — dashboard with funnel, velocity, source effectiveness, pipeline aging
-- **Agent-friendly docs** — playbooks and `AGENTS.md` for AI-assisted workflows
-
-```mermaid
-flowchart LR
-  CLI["jobtracker CLI"] --> Sources["sources / mail"]
-  Sources --> Payloads["payloads"]
-  Payloads --> Store["Postgres store"]
-  Store --> CRM["Next.js CRM"]
-  CLI --> Notify["notify"]
-```
-
-Architecture diagrams (discovery, registries, mail, pipelines, config): [Docs/architecture.md](Docs/architecture.md).
+A local-first, extensible toolkit for discovering opportunities, normalizing and deduplicating them, tracking search activity, and producing analysis artifacts. Python, SQLite, and local files are the standard path. PostgreSQL, hosted Supabase, mail, notifications, scheduling, and the Next.js CRM are optional layers.
 
 ## Quick start
+
+Supported standard environments are macOS and Linux with Python 3.10 or newer. Docker is not required.
 
 ```bash
 git clone https://github.com/the-dmytro/jobsearch-toolchain.git
 cd jobsearch-toolchain
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
 .venv/bin/pip install -e .
 
-# Scaffold your config and profile
+# Verify deterministic collectors without personal data or network access.
+.venv/bin/python -m jobtracker benchmark-sources \
+  --providers example_jsonld \
+  --fixture-dir jobtracker/fixtures/provider_fetch
+
+# Create ignored private configuration and profile files.
 .venv/bin/python -m jobtracker init
-
-# Validate setup (offline)
 .venv/bin/python -m jobtracker doctor --skip-network
-
-# Dry-run collectors with bundled fixtures (no network)
-.venv/bin/python -m jobtracker fetch-dou --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
-.venv/bin/python -m jobtracker benchmark-sources --providers dou,workua,djinni,greenhouse
 ```
 
-## Configuration
+`doctor` reports profile placeholders as actions until the private profile is filled. An agent can guide that process using [the kickstart protocol](Docs/onboarding/AGENT_KICKSTART.md); the same steps are available in the [documentation index](Docs/README.md).
 
-1. Copy `.env.example` → `.env` and fill database / mail credentials
-2. Edit `config/jobsearch.toml` (created by `init`) — enable connectors, set report email
-3. Fill `profile/` from `profile/templates/` — your preferences, CV source, project banks
-4. Apply migrations: `.venv/bin/python -m jobtracker migrate`
+## Product layers
 
-<<<<<<< HEAD
-See [Docs/getting-started.md](Docs/getting-started.md) and [Docs/configuration.md](Docs/configuration.md).
-=======
-See [Docs/getting-started.md](Docs/getting-started.md), [Docs/configuration.md](Docs/configuration.md), and [Docs/architecture.md](Docs/architecture.md).
->>>>>>> 185c4ac (Add architecture diagrams, CLI map, and analytics view docs)
-
-## CRM
-
-```bash
-cd crm
-cp ../.env.example .env.local   # or symlink
-npm install
-npm run dev
+```mermaid
+flowchart LR
+  Sources["Sources and mail"] --> Payload["PAYLOAD-V1 artifacts"]
+  Payload --> SQLite["SQLite default"]
+  Payload --> PostgreSQL["PostgreSQL optional"]
+  SQLite --> Reports["Local reports and analysis"]
+  PostgreSQL --> CRM["Hosted Supabase and CRM optional"]
+  Reports --> Notify["Mail and notifications optional"]
 ```
 
-Set `CRM_OWNER_EMAIL` to your Supabase Auth email. See [crm/README.md](crm/README.md).
+- Deterministic collectors: RSS, JSON-LD, HTML, JSON API, and service adapters.
+- Connector factories and plugin entry points for sources, mail, stores, and notifiers.
+- Idempotent local SQLite persistence plus replayable JSON payload artifacts.
+- PostgreSQL migrations and analytics views, with hosted Supabase supported as a PostgreSQL provider.
+- Optional Next.js CRM requiring Node.js 20 and hosted Supabase.
 
-## Project layout
+## Private data boundary
 
-```
-config/                 User configuration (TOML)
-profile/                Your personal data (gitignored)
-profile/templates/      Scaffold templates with {{PLACEHOLDER}} tokens
-jobtracker/             Python CLI and connector framework
-  core/                 Models, registry, protocols
-  sources/              Job board collectors
-  mail/                 IMAP/SMTP and email parsers
-  store/                Database and artifact backends
-  notify/               Report delivery (email, webhook, Slack, Telegram)
-crm/                    Next.js CRM dashboard
-db/migrations/          PostgreSQL schema
-Docs/                   Architecture, CLI map, configuration
-Docs/DB/                Schema docs and payload contract
-Docs/playbooks/         Automation instructions for agents
-```
+The generated `config/jobsearch.toml`, all filled `profile/` files, `.env`, `outputs/`, local databases, and onboarding state are ignored. Public templates live only under `profile/templates/generic/`. Never force-add private files to the public repository.
 
-## Automation
+## Extending and contributing
 
-```bash
-# Run a configured pipeline
-.venv/bin/python -m jobtracker run jobboards --dry-run
-
-# Manual single-source fetch
-.venv/bin/python -m jobtracker fetch-greenhouse-jobs --dry-run
-```
-
-Cron, launchd, and GitHub Actions examples: [examples/automation/](examples/automation/).
-
-## Extending
-
-| Approach | When |
-|----------|------|
-| Config only (`kind = "jsonld"` in TOML) | Standard job board with structured data |
-| In-tree service class | Named provider with custom parsing |
-| Out-of-tree plugin (entry points) | Private connector without forking |
-
-Guides: [Docs/connectors/](Docs/connectors/).
+Start with [connector contracts](Docs/contracts/README.md) and [connector guides](Docs/connectors/README.md). Install out-of-tree plugins from a local path or Git URL; no PyPI publication is implied for v0.2.0. Reusable changes should be proposed through a public branch and pull request using [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

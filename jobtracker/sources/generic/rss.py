@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import Any
 
 from jobtracker.core.models import Candidate, CollectionContext
 from jobtracker.sources.shared.infer import _excerpt, _infer_seniority, _matches_lane, _optional_iso

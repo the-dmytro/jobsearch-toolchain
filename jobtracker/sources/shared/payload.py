@@ -42,7 +42,7 @@ def _load_existing_refs(
         from opportunities o
         join providers p on p.id = o.provider_id
         where p.slug = %s
-          and ({' or '.join(clauses)})
+          and ({" or ".join(clauses)})
         """,
         tuple(params),
     )
