@@ -1,5 +1,11 @@
 # Automation payload contract
 
+`schemas/automation-payload.v1.schema.json` is the authoritative PAYLOAD-V1
+definition. This page explains fields and workflow but does not override the schema.
+Producers emit `run`, `source_items`, and `opportunities`. The validator reads legacy
+top-level `emails` and `jobs` aliases with warnings and normalizes them to the
+canonical names during the v0.2 compatibility window.
+
 Automations should write a JSON payload that can be consumed by:
 
 ```bash
@@ -61,7 +67,7 @@ python3 -m jobtracker parse-upwork-alerts --source-payload upwork-mail-source.pa
 - `application`: optional nested application object when an actual application was made.
 - `source_items`: optional source items specific to this opportunity. Entries may be full source-item objects or string references to top-level `source_items[].external_id`.
 - `dedupe_status`: `new`, `exact_external_id`, `exact_company_title`, `same_company_recent_application`, or `recently_notified`.
-- `dedupe_source`: `supabase`, `local_fallback_index`, or both when applicable.
+- `dedupe_source`: configured `jobstore`, `local_fallback_index`, or both when applicable.
 - `dedupe_reasons`: deterministic reason codes used for the decision.
 - `dedupe_matches`: compact evidence records for exact IDs, same-company applications, or recent notifications.
 - `email_policy`: `include_detail` or `suppress_detail`.

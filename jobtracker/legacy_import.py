@@ -19,7 +19,6 @@ from .utils import (
     slugify,
 )
 
-
 EXPECTED_FIELDS = [
     "Company",
     "Location",
@@ -63,7 +62,6 @@ def provider_from_source(source: str | None) -> tuple[str, str]:
         "linkedin": ("linkedin", "LinkedIn"),
         "djinny": ("djinni", "Djinni"),
         "djinni": ("djinni", "Djinni"),
-        "utc bcn": ("manual_import", "UTC Barcelona"),
     }
     return aliases.get(text.lower(), (slugify(text, "manual_import"), text))
 
@@ -97,7 +95,9 @@ def _auto_pdf_path(csv_path: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _pdf_overrides(path: str | Path, links_pdf: str | Path | None) -> tuple[list[PdfLink], list[dict[str, Any]]]:
+def _pdf_overrides(
+    path: str | Path, links_pdf: str | Path | None
+) -> tuple[list[PdfLink], list[dict[str, Any]]]:
     csv_path = Path(path)
     pdf_path = Path(links_pdf) if links_pdf else _auto_pdf_path(csv_path)
     if not pdf_path:
@@ -108,7 +108,9 @@ def _pdf_overrides(path: str | Path, links_pdf: str | Path | None) -> tuple[list
         raise ValueError(f"Could not extract links from {pdf_path}: {exc}") from exc
 
 
-def build_legacy_records(path: str | Path, links_pdf: str | Path | None = None) -> tuple[list[LegacyRecord], list[dict[str, Any]]]:
+def build_legacy_records(
+    path: str | Path, links_pdf: str | Path | None = None
+) -> tuple[list[LegacyRecord], list[dict[str, Any]]]:
     csv_path = Path(path)
     fields, rows = read_legacy_csv(csv_path)
     pdf_links, pdf_warnings = _pdf_overrides(csv_path, links_pdf)
@@ -243,7 +245,11 @@ def import_legacy_csv(conn: Any, path: str | Path, links_pdf: str | Path | None 
                     on conflict(slug) do update set name = excluded.name, updated_at = now()
                     returning id
                     """,
-                    (record.provider_slug, record.provider_name, "job_board" if record.provider_slug != "manual_import" else "manual"),
+                    (
+                        record.provider_slug,
+                        record.provider_name,
+                        "job_board" if record.provider_slug != "manual_import" else "manual",
+                    ),
                 )
                 provider_id = cur.fetchone()["id"]
 

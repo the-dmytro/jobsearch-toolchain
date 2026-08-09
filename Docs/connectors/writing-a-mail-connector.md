@@ -1,117 +1,52 @@
 # Writing a mail connector
 
-Mail connectors cover **inbox fetch**, **outbound send**, and **alert parsing**.
+Mail has three independent products: inbox, parser, and sender.
 
-## Inbox (general-purpose IMAP)
-
-**`config/jobsearch.toml`:**
+## Built-ins
 
 ```toml
 [mail.inbox]
 kind = "imap"
-host = "imap.mail.example.com"
-user = "jobs@example.com"
-folder_aliases.upwork = ["Upwork", "job/Upwork"]
-folder_aliases.linkedin = ["job/LinkedIn", "Jobs/Alerts/LinkedIn"]
-```
+host = "imap.example.com"
+user = "person@example.com"
 
-Password via `.env`: `JOBTRACKER_IMAP_PASSWORD=...`
-
-**CLI:**
-
-```bash
-python -m jobtracker discover-mail-folders
-python -m jobtracker fetch-mail-folder --provider upwork --limit 20 \
-  --output outputs/automation-payloads/upwork-mail-source.payload.json
-```
-
-## Rules-based parser (config only)
-
-For job alert emails without custom code:
-
-```toml
-[mail.parsers.my_alerts]
-kind = "rules"
-senders = ["alerts@example.com", "noreply@jobs.example.com"]
-subject_patterns = ["new job", "job alert"]
-link_patterns = ["https://jobs.example.com/view/\\d+"]
-provider_slug = "example"
-```
-
-## Service-specific parser (in-tree)
-
-**`jobtracker/mail/services/myprovider.py`:**
-
-```python
-from __future__ import annotations
-
-import re
-from typing import ClassVar
-
-from jobtracker.core.models import Candidate
-from jobtracker.mail.base import AlertParser, RawMessage
-from jobtracker.mail.registry import register_parser
-
-
-@register_parser
-class MyProviderParser(AlertParser):
-    slug: ClassVar[str] = "myprovider"
-
-    def matches(self, message: RawMessage) -> bool:
-        return "alerts@myprovider.com" in (message.from_address or "")
-
-    def parse(self, message: RawMessage) -> list[Candidate]:
-        candidates = []
-        for url in re.findall(r"https://myprovider.com/jobs/(\d+)", message.body_text or ""):
-            candidates.append(Candidate(
-                external_id=url,
-                title=message.subject or "Unknown",
-                source_url=f"https://myprovider.com/jobs/{url}",
-                apply_url=f"https://myprovider.com/jobs/{url}",
-            ))
-        return candidates
-```
-
-## Outbound (SMTP)
-
-```toml
 [mail.outbox]
 kind = "smtp"
 host = "smtp.example.com"
 port = 465
+user = "person@example.com"
 from_address = "reports@example.com"
 ```
 
-```bash
-python -m jobtracker send-report-email \
-  --provider upwork \
-  --run-key upwork-2026-01-01 \
-  --subject "Upwork report" \
-  --body-file report.md \
-  --to jobs@example.com
-```
+Passwords come from `.env`. Use `kind = "maildir"` plus a root-relative `path` for an offline inbox. EML parsing is an import/test helper, not an inbox kind.
 
-Missing `--to` / `JOBTRACKER_REPORT_EMAIL_TO` is an error (no hardcoded default).
-
-## Local / offline testing
+## Rules parser
 
 ```toml
-[mail.inbox]
-kind = "eml"
-path = "tests/fixtures/mail/sample-alert.eml"
+[mail.parsers.example]
+kind = "rules"
+senders = ["alerts@provider.example"]
+subject_patterns = ["new role", "job alert"]
+link_patterns = ["https://jobs\\.example/jobs/\\d+"]
+provider_slug = "example"
 ```
 
-Or maildir:
+Rules parsers and code parsers implement the same dictionary API:
 
-```toml
-[mail.inbox]
-kind = "maildir"
-path = "/path/to/Maildir"
+```python
+matches(message: dict[str, object]) -> bool
+parse(message: dict[str, object]) -> dict[str, object] | None
 ```
 
-## Out-of-tree plugin
+`RawMessage` fields are `message_id`, `external_id`, `subject`, `sender`, `recipient`, `email_date`, `timestamp`, `text`, `raw_text`, `links`, and `metadata`.
+
+## Plugin factories
+
+Entry-point groups are `jobtracker.mail.parsers`, `jobtracker.mail.inboxes`, and `jobtracker.mail.senders`. Each value is preferably a factory accepting `ConnectorBuildContext`; zero-argument classes/instances are deprecated compatibility forms.
 
 ```toml
 [project.entry-points."jobtracker.mail.parsers"]
-myprovider = "my_mail_plugin.parser:MyProviderParser"
+example = "private_mail.plugin:build_parser"
 ```
+
+Add fixture messages and test sender matching, parsing, stable source IDs, folder behavior, and that health/errors never expose credentials.

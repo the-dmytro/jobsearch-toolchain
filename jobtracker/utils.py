@@ -7,7 +7,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-
 _SPACE_RE = re.compile(r"\s+")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -127,4 +126,3 @@ def json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return str(value)
-

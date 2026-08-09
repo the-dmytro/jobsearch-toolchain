@@ -10,7 +10,6 @@ from typing import Any
 from .utils import normalize_name, normalize_space, parse_timestamp, slugify
 from .validation import normalize_provider_external_id, validate_payload
 
-
 _TITLE_STOPWORDS = {
     "senior",
     "sr",
@@ -124,7 +123,9 @@ class LocalDedupeIndex:
         if not root.exists():
             return cls(entries, now=now)
         excluded = {Path(path).resolve() for path in exclude_paths or []}
-        excluded_run_keys = {normalize_space(run_key) for run_key in exclude_run_keys or [] if normalize_space(run_key)}
+        excluded_run_keys = {
+            normalize_space(run_key) for run_key in exclude_run_keys or [] if normalize_space(run_key)
+        }
         for path in sorted(root.rglob("*.payload.json")):
             if path.resolve() in excluded:
                 continue
@@ -149,21 +150,36 @@ class LocalDedupeIndex:
             "providers": sorted({entry.provider for entry in self.entries if entry.provider}),
         }
 
-    def dedupe_candidate(self, provider: str, candidate: dict[str, Any], recent_application_days: int = 180, recent_notification_days: int = 14) -> DedupeDecision:
+    def dedupe_candidate(
+        self,
+        provider: str,
+        candidate: dict[str, Any],
+        recent_application_days: int = 180,
+        recent_notification_days: int = 14,
+    ) -> DedupeDecision:
         provider_slug = slugify(provider)
-        external_id = normalize_provider_external_id(provider_slug, candidate.get("external_id") or candidate.get("source_url") or candidate.get("job_url"))
-        company_norm = normalize_name(candidate.get("company") or candidate.get("organization") or candidate.get("client"))
-        title_norm = normalize_name(candidate.get("title") or candidate.get("role_title") or candidate.get("job_title"))
+        external_id = normalize_provider_external_id(
+            provider_slug,
+            candidate.get("external_id") or candidate.get("source_url") or candidate.get("job_url"),
+        )
+        company_norm = normalize_name(
+            candidate.get("company") or candidate.get("organization") or candidate.get("client")
+        )
+        title_norm = normalize_name(
+            candidate.get("title") or candidate.get("role_title") or candidate.get("job_title")
+        )
         family = title_family(title_norm)
         exact_matches = [
-            entry for entry in self.entries
+            entry
+            for entry in self.entries
             if entry.provider == provider_slug and external_id and entry.external_id == external_id
         ]
         if exact_matches:
             return _decision("exact_external_id", "suppress_detail", "exact_external_id", exact_matches)
 
         same_company_apps = [
-            entry for entry in self.entries
+            entry
+            for entry in self.entries
             if entry.company_norm
             and entry.company_norm == company_norm
             and entry.has_application
@@ -172,10 +188,16 @@ class LocalDedupeIndex:
             and (family & entry.title_family)
         ]
         if same_company_apps:
-            return _decision("same_company_recent_application", "suppress_detail", "same_company_recent_application", same_company_apps)
+            return _decision(
+                "same_company_recent_application",
+                "suppress_detail",
+                "same_company_recent_application",
+                same_company_apps,
+            )
 
         recent_notifications = [
-            entry for entry in self.entries
+            entry
+            for entry in self.entries
             if entry.notified_at
             and _days_between(self.now, entry.notified_at) <= recent_notification_days
             and (
@@ -184,7 +206,9 @@ class LocalDedupeIndex:
             )
         ]
         if recent_notifications:
-            return _decision("recently_notified", "suppress_detail", "recently_notified", recent_notifications)
+            return _decision(
+                "recently_notified", "suppress_detail", "recently_notified", recent_notifications
+            )
 
         return DedupeDecision()
 
@@ -216,7 +240,11 @@ def _entries_from_payload(payload: dict[str, Any], payload_path: str | None = No
     run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
     run_key = normalize_space(run.get("run_key") or payload.get("run_key")) or None
     provider = slugify((run_key or "").split("-", 1)[0]) if run_key else slugify(payload.get("provider"))
-    notified_at = _parse_datetime(run.get("finished_at") or run.get("started_at")) if run.get("report_email_sent") or run.get("email_sent") else None
+    notified_at = (
+        _parse_datetime(run.get("finished_at") or run.get("started_at"))
+        if run.get("report_email_sent") or run.get("email_sent")
+        else None
+    )
     entries: list[DedupeEntry] = []
     for item in payload.get("opportunities") or payload.get("jobs") or []:
         if not isinstance(item, dict):
@@ -226,13 +254,20 @@ def _entries_from_payload(payload: dict[str, Any], payload_path: str | None = No
         entries.append(
             DedupeEntry(
                 provider=provider,
-                external_id=normalize_provider_external_id(provider, item.get("external_id") or item.get("source_url") or item.get("job_url")),
-                company_norm=normalize_name(item.get("company") or item.get("organization") or item.get("client")),
+                external_id=normalize_provider_external_id(
+                    provider, item.get("external_id") or item.get("source_url") or item.get("job_url")
+                ),
+                company_norm=normalize_name(
+                    item.get("company") or item.get("organization") or item.get("client")
+                ),
                 title_norm=normalize_name(title),
                 title_family=title_family(title),
                 run_key=run_key,
                 notified_at=notified_at,
-                application_status=normalize_space(application.get("status") or application.get("current_stage")) or None,
+                application_status=normalize_space(
+                    application.get("status") or application.get("current_stage")
+                )
+                or None,
                 applied_at=_parse_date(application.get("applied_at")),
                 payload_path=payload_path,
             )
@@ -257,7 +292,9 @@ def apply_db_dedupe_matches(
     exclude_run_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(payload)
-    excluded_run_keys = {normalize_space(run_key) for run_key in exclude_run_keys or [] if normalize_space(run_key)}
+    excluded_run_keys = {
+        normalize_space(run_key) for run_key in exclude_run_keys or [] if normalize_space(run_key)
+    }
     for item in result.get("opportunities") or []:
         if not isinstance(item, dict):
             continue

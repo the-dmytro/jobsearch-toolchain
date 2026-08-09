@@ -44,18 +44,13 @@ def _profile_path(profile_dir: Path, slug: str) -> Path:
     return profile_dir / f"{slug}.toml"
 
 
-FIXTURE_TARGETS_BY_SLUG = {
-    "ios": Path("jobtracker/fixtures/provider_targets.toml"),
-    "data-ml-ai": Path("jobtracker/fixtures/provider_targets_data_ml_ai.toml"),
-}
-
-
-def _resolve_targets_path(targets_path: Path, slug: str) -> Path:
+def _resolve_targets_path(targets_path: Path, *, root: Path | None = None) -> Path:
     if targets_path.exists():
         return targets_path
-    fixture = FIXTURE_TARGETS_BY_SLUG.get(slug)
-    if fixture and fixture.exists():
-        return fixture
+    if root and not targets_path.is_absolute():
+        rooted = root / targets_path
+        if rooted.exists():
+            return rooted
     legacy = Path("jobtracker") / targets_path.name
     if legacy.exists():
         return legacy
@@ -69,7 +64,7 @@ def load_profile(slug: str, profile_dir: str | Path = "profile") -> JobboardProf
         raise ConfigValidationError(f"Profile not found: {path}")
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     validated = validate_profile_config(data, source_path=path)
-    targets_path = _resolve_targets_path(Path(str(validated["targets_path"])), slug)
+    targets_path = _resolve_targets_path(Path(str(validated["targets_path"])), root=directory.parent)
     validated["targets_path"] = str(targets_path)
     return JobboardProfile.from_validated(validated)
 

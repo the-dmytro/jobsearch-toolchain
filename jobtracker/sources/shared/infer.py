@@ -90,7 +90,9 @@ def _matches_lane(title: str | None, lane: dict[str, Any]) -> bool:
     def has_term(term: str) -> bool:
         raw_term = normalize_space(term).lower()
         normalized_term = normalize_name(term)
-        return bool((raw_term and raw_term in raw_text) or (normalized_term and normalized_term in normalized_text))
+        return bool(
+            (raw_term and raw_term in raw_text) or (normalized_term and normalized_term in normalized_text)
+        )
 
     includes = [item for item in lane.get("include_terms") or [] if normalize_space(item)]
     excludes = [item for item in lane.get("exclude_terms") or [] if normalize_space(item)]

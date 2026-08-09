@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobtracker-fixture-connectors"
+version = "0.2.0"
+description = "Fictitious contract fixtures for JobSearch Toolchain connector entry points"
+requires-python = ">=3.10"
+
+[project.entry-points."jobtracker.sources"]
+fixture-source = "jobtracker_fixture_connectors:build_source"
+
+[project.entry-points."jobtracker.mail.parsers"]
+fixture-parser = "jobtracker_fixture_connectors:build_parser"
+
+[project.entry-points."jobtracker.mail.inboxes"]
+fixture-inbox = "jobtracker_fixture_connectors:build_inbox"
+
+[project.entry-points."jobtracker.mail.senders"]
+fixture-sender = "jobtracker_fixture_connectors:build_sender"
+
+[project.entry-points."jobtracker.stores"]
+fixture-store = "jobtracker_fixture_connectors:build_store"
+
+[project.entry-points."jobtracker.notifiers"]
+fixture-notifier = "jobtracker_fixture_connectors:build_notifier"
+
+[tool.setuptools]
+packages = ["jobtracker_fixture_connectors"]

@@ -5,7 +5,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .utils import normalize_space
 
-
 TRACKING_PARAMS = {
     "alternatechannel",
     "eid",

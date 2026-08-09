@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/the-dmytro/jobsearch-toolchain/schemas/automation-payload.v1.schema.json",
+  "title": "JobSearch automation payload v1",
+  "type": "object",
+  "required": ["run", "source_items", "opportunities"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run": {
+      "type": "object",
+      "required": ["run_key", "status"],
+      "properties": {
+        "run_key": { "type": "string", "minLength": 1 },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "finished_at": { "type": ["string", "null"], "format": "date-time" },
+        "status": { "enum": ["completed", "partial", "failed"] },
+        "summary": { "type": ["string", "null"] },
+        "report_email_sent": { "type": "boolean" },
+        "report_email_subject": { "type": ["string", "null"] },
+        "metrics": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "source_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_type", "external_id"],
+        "properties": {
+          "source_type": { "type": "string", "minLength": 1 },
+          "external_id": { "type": "string", "minLength": 1 },
+          "source_url": { "type": ["string", "null"] },
+          "timestamp": { "type": ["string", "null"] },
+          "title": { "type": ["string", "null"] },
+          "subject": { "type": ["string", "null"] },
+          "summary": { "type": ["string", "null"] },
+          "raw_text": { "type": ["string", "null"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "opportunities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "opportunity_type": { "enum": ["employment", "freelance_project"] },
+          "external_id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "company": { "type": ["string", "null"] },
+          "source_url": { "type": ["string", "null"] },
+          "apply_url": { "type": ["string", "null"] },
+          "source_items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "object" }
+              ]
+            }
+          },
+          "evaluation": { "type": ["object", "null"] },
+          "application": { "type": ["object", "null"] },
+          "metadata": { "type": "object" }
+        },
+        "anyOf": [
+          { "required": ["external_id"] },
+          { "required": ["source_url"] }
+        ],
+        "additionalProperties": true
+      }
+    },
+    "manual_review_blockers": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "object" }
+        ]
+      }
+    },
+    "summary": { "type": ["string", "null"] },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": true
+}

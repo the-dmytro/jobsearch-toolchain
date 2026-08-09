@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,8 +30,14 @@ class AutomationStateStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        with closing(self._connect()) as conn:
+            with conn:
+                yield conn
+
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.executescript(
                 """
                 create table if not exists source_items (
@@ -90,13 +98,17 @@ class AutomationStateStore:
     def upsert_source_items(self, provider: str, items: list[dict[str, Any]]) -> dict[str, int]:
         now = _utc_iso()
         count = 0
-        with self._connect() as conn:
+        with self._session() as conn:
             for item in items:
                 source_type = normalize_space(item.get("source_type")) or "email"
-                external_id = normalize_space(item.get("external_id") or item.get("message_id") or item.get("id"))
+                external_id = normalize_space(
+                    item.get("external_id") or item.get("message_id") or item.get("id")
+                )
                 if not external_id:
                     continue
-                body = normalize_space(item.get("raw_text") or item.get("text") or item.get("summary") or item.get("snippet"))
+                body = normalize_space(
+                    item.get("raw_text") or item.get("text") or item.get("summary") or item.get("snippet")
+                )
                 body_sha = sha256_text(body) if body else None
                 conn.execute(
                     """
@@ -118,8 +130,12 @@ class AutomationStateStore:
                         provider,
                         source_type,
                         external_id,
-                        normalize_space(item.get("source_url") or item.get("url") or item.get("gmail_link")) or None,
-                        normalize_space(item.get("timestamp") or item.get("source_timestamp") or item.get("email_date")) or None,
+                        normalize_space(item.get("source_url") or item.get("url") or item.get("gmail_link"))
+                        or None,
+                        normalize_space(
+                            item.get("timestamp") or item.get("source_timestamp") or item.get("email_date")
+                        )
+                        or None,
                         normalize_space(item.get("subject") or item.get("title")) or None,
                         body_sha,
                         _json(item),
@@ -130,7 +146,9 @@ class AutomationStateStore:
                 count += 1
         return {"upserted": count}
 
-    def pending_source_items(self, provider: str, stage: str, limit: int | None = None) -> list[dict[str, Any]]:
+    def pending_source_items(
+        self, provider: str, stage: str, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         column = {
             "evaluation": "evaluated_at",
             "evaluated": "evaluated_at",
@@ -151,7 +169,7 @@ class AutomationStateStore:
         if limit is not None:
             sql += " limit ?"
             params.append(limit)
-        with self._connect() as conn:
+        with self._session() as conn:
             return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
     def mark_source_stage(self, provider: str, source_type: str, external_id: str, stage: str) -> None:
@@ -163,7 +181,7 @@ class AutomationStateStore:
         if not column:
             raise ValueError(f"Unsupported source stage: {stage}")
         now = _utc_iso()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 f"""
                 update source_items
@@ -173,10 +191,20 @@ class AutomationStateStore:
                 (now, now, provider, source_type, external_id),
             )
 
-    def reserve_email(self, idempotency_key: str, provider: str, run_key: str, to_address: str, subject: str, metadata: dict[str, Any] | None = None) -> bool:
+    def reserve_email(
+        self,
+        idempotency_key: str,
+        provider: str,
+        run_key: str,
+        to_address: str,
+        subject: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         now = _utc_iso()
-        with self._connect() as conn:
-            row = conn.execute("select status from email_outbox where idempotency_key = ?", (idempotency_key,)).fetchone()
+        with self._session() as conn:
+            row = conn.execute(
+                "select status from email_outbox where idempotency_key = ?", (idempotency_key,)
+            ).fetchone()
             if row and row["status"] in {"reserved", "sent"}:
                 return False
             if row:
@@ -197,13 +225,22 @@ class AutomationStateStore:
                     )
                     values (?, ?, ?, ?, ?, 'reserved', 1, ?, ?, ?)
                     """,
-                    (idempotency_key, provider, run_key, to_address, subject, _json(metadata or {}), now, now),
+                    (
+                        idempotency_key,
+                        provider,
+                        run_key,
+                        to_address,
+                        subject,
+                        _json(metadata or {}),
+                        now,
+                        now,
+                    ),
                 )
             return True
 
     def mark_email_sent(self, idempotency_key: str) -> None:
         now = _utc_iso()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 """
                 update email_outbox
@@ -215,7 +252,7 @@ class AutomationStateStore:
 
     def mark_email_failed(self, idempotency_key: str, error: str) -> None:
         now = _utc_iso()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 """
                 update email_outbox
@@ -226,13 +263,17 @@ class AutomationStateStore:
             )
 
     def is_run_db_synced(self, run_key: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute("select db_synced_at from run_sync_state where run_key = ?", (run_key,)).fetchone()
+        with self._session() as conn:
+            row = conn.execute(
+                "select db_synced_at from run_sync_state where run_key = ?", (run_key,)
+            ).fetchone()
         return bool(row and row["db_synced_at"])
 
-    def mark_run_sync_attempt(self, provider: str, run_key: str, payload_path: str, error: str | None = None) -> None:
+    def mark_run_sync_attempt(
+        self, provider: str, run_key: str, payload_path: str, error: str | None = None
+    ) -> None:
         now = _utc_iso()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 """
                 insert into run_sync_state(run_key, provider, payload_path, sync_attempts, last_error, updated_at)
@@ -249,7 +290,7 @@ class AutomationStateStore:
 
     def mark_run_db_synced(self, provider: str, run_key: str, payload_path: str) -> None:
         now = _utc_iso()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 """
                 insert into run_sync_state(run_key, provider, payload_path, db_synced_at, sync_attempts, updated_at)
@@ -264,8 +305,15 @@ class AutomationStateStore:
                 (run_key, provider, payload_path, now, now),
             )
 
-    def record_run_event(self, provider: str, run_key: str | None, event_type: str, message: str | None = None, metadata: dict[str, Any] | None = None) -> None:
-        with self._connect() as conn:
+    def record_run_event(
+        self,
+        provider: str,
+        run_key: str | None,
+        event_type: str,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self._session() as conn:
             conn.execute(
                 """
                 insert into run_events(run_key, provider, event_type, message, metadata_json, created_at)

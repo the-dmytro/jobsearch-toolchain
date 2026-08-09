@@ -1,33 +1,11 @@
 # Contributing
 
-## Architecture
+Create reusable changes in a branch of the public repository and open a pull request. Install development tools with `requirements-dev.txt`.
 
-- **Connectors** live in `jobtracker/sources/`, `jobtracker/mail/`, `jobtracker/store/`, `jobtracker/notify/`
-- **General-purpose** connectors are config-driven (TOML `kind = "rss"` etc.)
-- **Service-specific** connectors are thin Python classes in `services/` subdirectories
-- **Payload contract** is defined in `Docs/DB/AUTOMATION_PAYLOAD_CONTRACT.md` — do not change without discussion
+Changes to schemas, connector signatures, store behavior, doctor semantics, migrations, fixtures, examples, or compatibility require matching tests and documentation. Breaking public-contract changes require a new contract version; do not silently edit v1 semantics.
 
-## Adding a job source
+Never commit personal data or secrets. Use reserved example domains and explicitly fictitious fixtures. Run the release checklist gates relevant to the change before requesting review.
 
-See [Docs/connectors/writing-a-source.md](Docs/connectors/writing-a-source.md).
+Out-of-tree connectors should be installed from a local path or Git URL. The host package is not advertised as a PyPI dependency in v0.2.0.
 
-## Adding a mail parser
-
-See [Docs/connectors/writing-a-mail-connector.md](Docs/connectors/writing-a-mail-connector.md).
-
-## Development setup
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/pip install -e .
-python3 -m unittest discover -s tests
-python3 scripts/scan_pii.py
-```
-
-## Pull requests
-
-- One logical change per PR
-- All tests must pass
-- PII scan must pass (`python3 scripts/scan_pii.py`)
-- No personal data in tracked files
+Private emergency fixes must carry an upstream issue or PR reference and be generalized before publication. See [PUBLIC_UPSTREAM.md](Docs/contributing/PUBLIC_UPSTREAM.md).

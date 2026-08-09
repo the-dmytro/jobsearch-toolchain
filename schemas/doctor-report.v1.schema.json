@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/the-dmytro/jobsearch-toolchain/schemas/doctor-report.v1.schema.json",
+  "title": "JobSearch doctor report v1",
+  "type": "object",
+  "required": ["schema_version", "status", "ok", "issues", "checks"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["ready", "action_required", "error"] },
+    "ok": { "type": "boolean" },
+    "issues": { "type": "array", "items": { "type": "string" } },
+    "checks": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

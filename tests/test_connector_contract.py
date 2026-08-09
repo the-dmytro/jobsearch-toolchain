@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from pathlib import Path
 
-from jobtracker.core.models import Candidate, CollectionContext, FetchMetrics
-from jobtracker.sources.registry import source_registry
+from jobtracker.core.models import CollectionContext, FetchMetrics
+from jobtracker.sources.registry import resolve_source, source_registry
 from jobtracker.store.generic.memory import MemoryJobStore
 
 
@@ -14,7 +14,8 @@ class ConnectorContractTests(unittest.TestCase):
     def test_all_sources_have_slug_and_health(self) -> None:
         from jobtracker.sources import services  # noqa: F401 — trigger registration
 
-        for slug, source in source_registry.all().items():
+        for slug in source_registry.all():
+            source = resolve_source(slug, root=Path.cwd())
             self.assertTrue(source.slug, f"{slug} missing slug")
             ctx = _minimal_collection_ctx(slug)
             report = source.health(ctx)
@@ -78,7 +79,6 @@ class ConnectorContractTests(unittest.TestCase):
 
 
 def _minimal_collection_ctx(slug: str) -> CollectionContext:
-    from jobtracker.core.models import FetchMetrics
     from jobtracker.sources.shared.fetch import FixtureFetcher
 
     metrics = FetchMetrics()

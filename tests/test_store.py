@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -97,7 +99,9 @@ class MemoryJobStoreTests(unittest.TestCase):
     def test_check_duplicates_returns_seeded_matches(self) -> None:
         write_payload(self.root, build_payload())
         self.store.upsert_run_payload("acme", str(self.root / "run.payload.json"))
-        match = DuplicateMatch(match_type="exact_external_id", title="Senior iOS Engineer", company="Acme Corp")
+        match = DuplicateMatch(
+            match_type="exact_external_id", title="Senior iOS Engineer", company="Acme Corp"
+        )
         self.store.duplicates[("acme", "job-1")] = [match]
 
         matches = self.store.check_duplicates("acme", None, None, external_id="job-1")
@@ -124,6 +128,9 @@ class SqliteJobStoreTests(unittest.TestCase):
 
     def test_schema_is_created_eagerly(self) -> None:
         self.assertTrue((self.root / "state.sqlite").exists())
+        with closing(self.store._connect()) as conn:
+            version = conn.execute("select version from schema_version").fetchone()["version"]
+        self.assertEqual(version, 1)
 
     def test_upsert_then_check_duplicates_finds_the_opportunity(self) -> None:
         path = write_payload(self.root, build_payload(with_evaluation=True))
@@ -152,10 +159,23 @@ class SqliteJobStoreTests(unittest.TestCase):
         self.store.upsert_run_payload("acme", str(path))
         self.store.upsert_run_payload("acme", str(path), report_path="outputs/report.md")
 
-        with self.store._connect() as conn:
+        with closing(self.store._connect()) as conn:
             runs = conn.execute("select run_key, report_path from automation_runs").fetchall()
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["report_path"], "outputs/report.md")
+        with closing(self.store._connect()) as conn:
+            opportunity_count = conn.execute("select count(*) from opportunities").fetchone()[0]
+        self.assertEqual(opportunity_count, 2)
+
+    def test_schema_version_newer_than_supported_is_rejected(self) -> None:
+        db_path = self.root / "future.sqlite"
+        with closing(sqlite3.connect(db_path)) as conn:
+            conn.execute("create table schema_version(version integer not null)")
+            conn.execute("insert into schema_version(version) values (99)")
+            conn.commit()
+
+        with self.assertRaises(RuntimeError):
+            SqliteJobStore(db_path)
 
     def test_export_application_summary_is_markdown(self) -> None:
         self.assertIn("app-7", self.store.export_application_summary("app-7"))
@@ -322,7 +342,9 @@ class ArtifactStoreFactoryTests(unittest.TestCase):
             self.assertIsInstance(artifact_store_factory("local"), LocalArtifactStore)
 
     def test_supabase_backend(self) -> None:
-        with mock.patch.object(local_artifacts, "load_settings", return_value=settings(artifact_backend="supabase")):
+        with mock.patch.object(
+            local_artifacts, "load_settings", return_value=settings(artifact_backend="supabase")
+        ):
             self.assertIsInstance(artifact_store_factory(), SupabaseArtifactStore)
 
     def test_unknown_backend_is_rejected(self) -> None:

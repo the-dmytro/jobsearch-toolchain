@@ -11,7 +11,6 @@ from jobtracker.pdf_links import PdfLink
 from jobtracker.url_tools import clean_url
 from jobtracker.utils import parse_money_range, valid_url
 
-
 HEADER = [
     "Company",
     "Location",
@@ -85,12 +84,12 @@ class LegacyImportTests(unittest.TestCase):
         path = self.write_csv(
             [
                 {
-                    "Company": "Porsche",
-                    "Location": "Barcelona",
+                    "Company": "Example Motors",
+                    "Location": "Remote",
                     "Kind": "Hybrid",
                     "Domain": "Automotive",
                     "Vacancy link": "https://example.com/job",
-                    "Source": "UTC Bcn",
+                    "Source": "Other",
                     "Application date": "31 Jan 2025",
                     "Salary requested": "€\t65.000",
                     "Stage": "Declined",
@@ -116,7 +115,7 @@ class LegacyImportTests(unittest.TestCase):
         )
         summary = summarize_legacy_csv(path)
         self.assertEqual(summary["usable_rows"], 2)
-        self.assertEqual(summary["providers"]["manual_import"], 1)
+        self.assertEqual(summary["providers"]["other"], 1)
         self.assertEqual(summary["providers"]["djinni"], 1)
         self.assertEqual(summary["stages"]["Applied"], 1)
         self.assertEqual(summary["warnings"]["legacy_link_placeholder_or_non_url"], 1)
@@ -169,8 +168,16 @@ class LegacyImportTests(unittest.TestCase):
             ]
         )
         fake_links = [
-            PdfLink("https://www.linkedin.com/jobs/view/111/", "https://www.linkedin.com/jobs/view/111/?trackingId=abc", 1, 1, (512.0,)),
-            PdfLink("https://jobs.example.com/a", "https://jobs.example.com/a?utm_campaign=x", 1, 2, (512.0,)),
+            PdfLink(
+                "https://www.linkedin.com/jobs/view/111/",
+                "https://www.linkedin.com/jobs/view/111/?trackingId=abc",
+                1,
+                1,
+                (512.0,),
+            ),
+            PdfLink(
+                "https://jobs.example.com/a", "https://jobs.example.com/a?utm_campaign=x", 1, 2, (512.0,)
+            ),
             PdfLink("https://jobs.example.com/b", "https://jobs.example.com/b?refId=x", 1, 3, (512.0,)),
         ]
 
@@ -187,8 +194,13 @@ class LegacyImportTests(unittest.TestCase):
     def test_url_and_money_helpers(self) -> None:
         self.assertEqual(valid_url("https://example.com/a"), "https://example.com/a")
         self.assertIsNone(valid_url("Link 1, link 2"))
-        self.assertEqual(clean_url("https://www.linkedin.com/jobs/view/123/?trackingId=x"), "https://www.linkedin.com/jobs/view/123/")
-        self.assertEqual(clean_url("https://example.com/job?utm_source=x&id=7&trk=y"), "https://example.com/job?id=7")
+        self.assertEqual(
+            clean_url("https://www.linkedin.com/jobs/view/123/?trackingId=x"),
+            "https://www.linkedin.com/jobs/view/123/",
+        )
+        self.assertEqual(
+            clean_url("https://example.com/job?utm_source=x&id=7&trk=y"), "https://example.com/job?id=7"
+        )
         salary = parse_money_range("$90000-100000")
         self.assertEqual(salary["currency"], "USD")
         self.assertEqual(str(salary["min"]), "90000")

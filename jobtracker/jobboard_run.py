@@ -12,11 +12,10 @@ from .app_config.profiles import JobboardProfile, load_profile
 from .config import load_env_file
 from .db import connect
 from .dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
-from .payloads import check_duplicates
 from .provider_fetch import collect_provider_run
+from .store.base import JobStore
 from .utils import json_default, normalize_space, utc_now
 from .validation import validate_payload
-
 
 DEFAULT_JOBBOARD_PROVIDERS = ["dou", "workua", "djinni"]
 
@@ -53,7 +52,9 @@ def _write_payload(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(_json(payload), encoding="utf-8")
 
 
-def _annotate_payload(payload: dict[str, Any], profile: JobboardProfile, provider: str, targets_path: Path) -> dict[str, Any]:
+def _annotate_payload(
+    payload: dict[str, Any], profile: JobboardProfile, provider: str, targets_path: Path
+) -> dict[str, Any]:
     result = copy.deepcopy(payload)
     metadata = result.setdefault("metadata", {})
     metadata["jobboard_profile"] = {
@@ -65,15 +66,25 @@ def _annotate_payload(payload: dict[str, Any], profile: JobboardProfile, provide
     return result
 
 
-def _db_dedupe(payload: dict[str, Any], provider: str, conn: Any | None, run_key: str) -> dict[str, Any]:
-    if conn is None:
+def _store_dedupe(
+    payload: dict[str, Any], provider: str, store: JobStore | None, run_key: str
+) -> dict[str, Any]:
+    if store is None:
         return payload
     matches_by_external_id: dict[str, list[dict[str, Any]]] = {}
     for item in payload.get("opportunities") or []:
         if not isinstance(item, dict):
             continue
         external_id = normalize_space(item.get("external_id"))
-        matches = check_duplicates(conn, provider, item.get("company"), item.get("title"), external_id=external_id)
+        matches = [
+            match.as_dict()
+            for match in store.check_duplicates(
+                provider,
+                item.get("company"),
+                item.get("title"),
+                external_id=external_id,
+            )
+        ]
         if external_id and matches:
             matches_by_external_id[external_id] = matches
     return apply_db_dedupe_matches(payload, matches_by_external_id, exclude_run_keys=[run_key])
@@ -95,6 +106,9 @@ def prepare_jobboard_run(
     output_dir: str | Path = "outputs/automation-payloads",
     payload_dir: str | Path = "outputs/automation-payloads",
     profile_dir: str | Path = "profile",
+    root: str | Path | None = None,
+    store: JobStore | None = None,
+    config_path: str | Path | None = None,
     include_db: bool = True,
     fixture_dir: str | Path | None = None,
     now: datetime | None = None,
@@ -103,9 +117,18 @@ def prepare_jobboard_run(
 ) -> dict[str, Any]:
     profile_key = normalize_space(profile_slug).lower()
     profile = load_profile(profile_key, profile_dir=profile_dir)
-    provider_list = [normalize_space(provider).lower() for provider in (providers or DEFAULT_JOBBOARD_PROVIDERS) if normalize_space(provider)]
+    provider_list = [
+        normalize_space(provider).lower()
+        for provider in (providers or DEFAULT_JOBBOARD_PROVIDERS)
+        if normalize_space(provider)
+    ]
+    project_root = Path(root or Path.cwd())
     output_root = Path(output_dir)
+    if not output_root.is_absolute():
+        output_root = project_root / output_root
     payload_root = Path(payload_dir)
+    if not payload_root.is_absolute():
+        payload_root = project_root / payload_root
     output_root.mkdir(parents=True, exist_ok=True)
     started_at = _as_utc(now)
     date_slug = started_at.date().isoformat()
@@ -115,7 +138,11 @@ def prepare_jobboard_run(
     provider_runs: list[dict[str, Any]] = []
     overall_status = "completed"
     with ExitStack() as stack:
-        conn, db_status = _connect_for_prepare(stack, include_db)
+        conn = getattr(store, "conn", None) if store is not None else None
+        if store is not None:
+            db_status = {"status": "available", "backend": type(store).__name__}
+        else:
+            conn, db_status = _connect_for_prepare(stack, include_db)
         for provider in provider_list:
             provider_slug = normalize_space(provider).lower()
             paths = _payload_paths(output_root, date_slug, profile.output_slug, provider_slug)
@@ -126,6 +153,8 @@ def prepare_jobboard_run(
                 payload_out=paths["payload"],
                 fixture_dir=fixture_dir,
                 targets_path=targets_path,
+                config_path=config_path,
+                root=project_root,
                 run_key=f"{provider_slug}-{profile.output_slug}-{date_slug}",
                 now=started_at,
                 max_pages=max_pages,
@@ -146,7 +175,7 @@ def prepare_jobboard_run(
                 exclude_run_keys=[result.run_key],
             )
             deduped = dedupe_payload(validation.normalized, provider=provider_slug, index=index)
-            deduped = _db_dedupe(deduped, provider_slug, conn, result.run_key)
+            deduped = _store_dedupe(deduped, provider_slug, store, result.run_key)
             _write_payload(paths["deduped"], deduped)
 
             if result.status != "completed":
@@ -171,8 +200,10 @@ def prepare_jobboard_run(
         overall_status = "partial"
 
     finished_at = _as_utc(now)
-    report_path = profile.report_path_template.format(date=date_slug)
-    email_body_path = output_root / profile.email_body_template.format(date=date_slug)
+    report_path_value = Path(profile.report_path_template.format(date=date_slug))
+    report_path = report_path_value if report_path_value.is_absolute() else project_root / report_path_value
+    email_body_value = Path(profile.email_body_template.format(date=date_slug))
+    email_body_path = email_body_value if email_body_value.is_absolute() else project_root / email_body_value
     manifest_path = output_root / f"{date_slug}-{profile.output_slug}-manifest.json"
     manifest = {
         "schema": "jobboard_automation_manifest_v1",
@@ -195,7 +226,7 @@ def prepare_jobboard_run(
         },
         "db": db_status,
         "artifacts": {
-            "report_path": report_path,
+            "report_path": str(report_path),
             "email_body_path": str(email_body_path),
         },
         "provider_runs": provider_runs,

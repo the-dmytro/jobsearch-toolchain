@@ -4,13 +4,18 @@
 !.env.example
 .pii-denylist.txt
 
-# Personal data (tracked on `personal` branch via git add -f)
-# Keep scaffold templates public; ignore filled-in profile files.
+# Private runtime state. Public templates stay tracked; generated or filled files do not.
 /profile/*
 !/profile/templates/
 !/profile/templates/**
+/config/jobsearch.toml
+/config/jobsearch.local.toml
+/.jobsearch-onboarding.json
 /Docs/Tracking/
 /outputs/
+*.sqlite
+*.sqlite3
+*.db
 
 __pycache__/
 *.py[cod]

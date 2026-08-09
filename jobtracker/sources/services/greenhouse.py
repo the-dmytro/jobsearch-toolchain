@@ -18,7 +18,9 @@ from jobtracker.sources.shared.payload import _is_duplicate, _load_existing_refs
 from jobtracker.url_tools import clean_url
 from jobtracker.utils import normalize_space
 
-_GREENHOUSE_BOARD_RE = re.compile(r"https?://(?:job-boards|boards)\.greenhouse\.io/([^/?#]+)/jobs", re.IGNORECASE)
+_GREENHOUSE_BOARD_RE = re.compile(
+    r"https?://(?:job-boards|boards)\.greenhouse\.io/([^/?#]+)/jobs", re.IGNORECASE
+)
 
 
 def _greenhouse_external_id(board_token: str, job_id: Any) -> str:
@@ -64,7 +66,9 @@ def _load_greenhouse_board_tokens_from_db(conn: Any | None) -> list[str]:
     return tokens
 
 
-def _parse_greenhouse_jobs(payload: dict[str, Any], board_token: str, lane: dict[str, Any], metrics: Any) -> list[Candidate]:
+def _parse_greenhouse_jobs(
+    payload: dict[str, Any], board_token: str, lane: dict[str, Any], metrics: Any
+) -> list[Candidate]:
     candidates: list[Candidate] = []
     for item in payload.get("jobs") or []:
         title = normalize_space(item.get("title"))
@@ -90,7 +94,8 @@ def _parse_greenhouse_jobs(payload: dict[str, Any], board_token: str, lane: dict
                 summary=_excerpt(content),
                 description=content or None,
                 first_seen_at=_optional_iso(item.get("first_published")),
-                last_seen_at=_optional_iso(item.get("updated_at")) or _optional_iso(item.get("first_published")),
+                last_seen_at=_optional_iso(item.get("updated_at"))
+                or _optional_iso(item.get("first_published")),
                 metadata={
                     "provider": "greenhouse",
                     "board_token": board_token,
@@ -118,7 +123,11 @@ class GreenhouseSource:
         metrics = ctx.metrics
         explicit_tokens = ctx.options.get("board_tokens")
         max_boards = ctx.options.get("max_boards")
-        denylist = {normalize_space(token).lower() for token in provider_targets.get("denylist") or [] if normalize_space(token)}
+        denylist = {
+            normalize_space(token).lower()
+            for token in provider_targets.get("denylist") or []
+            if normalize_space(token)
+        }
         auto_tokens = _load_greenhouse_board_tokens_from_db(ctx.conn)
         manual_tokens = [
             normalize_space(token).lower()

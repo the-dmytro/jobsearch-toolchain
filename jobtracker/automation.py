@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,14 +15,15 @@ from .db import connect
 from .jobboard_run import prepare_jobboard_run
 from .mail.generic.imap import MailImapClient
 from .mail.generic.smtp import SmtpMailSender
+from .mail.registry import build_mail_inbox, build_mail_sender
 from .notify.base import RunReport
 from .notify.registry import build_notifier, notify_all
-from .payloads import upsert_run_payload
-from .sources.registry import source_registry
+from .sources.registry import resolve_source
 from .sources.shared.fetch import LiveFetcher
+from .store.registry import open_job_store
 from .utils import normalize_space
 
-PROFILE_TEMPLATE_DIR = Path("profile/templates")
+PROFILE_TEMPLATE_DIR = Path("profile/templates/generic")
 
 
 def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[str, Any]:
@@ -53,16 +55,6 @@ def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[st
                     continue
                 shutil.copyfile(template_path, destination)
                 created.append(str(destination))
-        banks_example = templates_dir / "project-bank.example.md"
-        banks_dir = profile_dir / "project-banks"
-        if banks_example.exists():
-            banks_dir.mkdir(parents=True, exist_ok=True)
-            bank_dest = banks_dir / "example.md"
-            if bank_dest.exists() and not force:
-                skipped.append(str(bank_dest))
-            else:
-                shutil.copyfile(banks_example, bank_dest)
-                created.append(str(bank_dest))
     return {"created": created, "skipped": skipped}
 
 
@@ -81,16 +73,24 @@ def validate_config(config: AppConfig) -> list[str]:
 
 def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
     results: dict[str, list[str]] = {}
+    configured = {
+        normalize_space(provider).lower()
+        for pipeline in config.pipelines.values()
+        for provider in pipeline.get("providers") or []
+    }
+    configured.update(config.source_configs)
     fetcher = LiveFetcher(FetchMetrics())
     try:
-        for slug, source in sorted(source_registry.all().items()):
+        for slug in sorted(configured):
+            source_config = config.source_configs.get(slug) or {}
+            source = resolve_source(slug, source_config=source_config, root=config.root)
             ctx = CollectionContext(
                 conn=None,
                 fetcher=fetcher,
                 targets={},
                 metrics=FetchMetrics(),
                 provider_slug=slug,
-                options={},
+                options=dict(source_config),
             )
             try:
                 results[slug] = list(source.health(ctx))
@@ -115,9 +115,11 @@ def check_db_connectivity() -> list[str]:
     return []
 
 
-def check_imap_connectivity() -> list[str]:
+def check_imap_connectivity(options: dict[str, Any] | None = None, *, root: Path | None = None) -> list[str]:
     try:
-        with MailImapClient() as client:
+        inbox = build_mail_inbox(options, root=root or Path.cwd()) if options else MailImapClient()
+        inbox_context = inbox if hasattr(inbox, "__enter__") else nullcontext(inbox)
+        with inbox_context as client:
             folders = client.list_folders()
         if not folders:
             return ["imap: connected but no folders returned"]
@@ -126,9 +128,9 @@ def check_imap_connectivity() -> list[str]:
     return []
 
 
-def check_smtp_connectivity() -> list[str]:
+def check_smtp_connectivity(options: dict[str, Any] | None = None, *, root: Path | None = None) -> list[str]:
     try:
-        SmtpMailSender()
+        build_mail_sender(options, root=root or Path.cwd()) if options else SmtpMailSender()
     except Exception as exc:
         return [f"smtp: {exc}"]
     return []
@@ -138,7 +140,7 @@ def check_notifier_health(config: AppConfig) -> dict[str, list[str]]:
     results: dict[str, list[str]] = {}
     for channel, channel_config in config.notify.items():
         try:
-            notifier = build_notifier(channel, channel_config)
+            notifier = build_notifier(channel, channel_config, root=config.root)
             results[channel] = list(notifier.health())
         except Exception as exc:
             results[channel] = [str(exc)]
@@ -152,11 +154,18 @@ def run_doctor(
     skip_network: bool = False,
 ) -> dict[str, Any]:
     project_root = root or Path.cwd()
-    report: dict[str, Any] = {"ok": True, "issues": [], "checks": {}}
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "ready",
+        "ok": True,
+        "issues": [],
+        "checks": {},
+    }
     try:
         config = load_app_config(config_path, root=project_root)
     except (ConfigValidationError, FileNotFoundError) as exc:
         report["ok"] = False
+        report["status"] = "error"
         report["issues"].append(str(exc))
         return report
 
@@ -167,7 +176,11 @@ def run_doctor(
         report["issues"].extend(schema_issues)
 
     placeholder_issues: list[dict[str, str]] = []
-    for profile in _iter_config_profiles(config):
+    try:
+        profiles = _iter_config_profiles(config)
+    except ConfigValidationError:
+        profiles = []
+    for profile in profiles:
         placeholder_issues.extend(scan_profile_placeholders(list(profile.profile_files), root=project_root))
     report["checks"]["profile_placeholders"] = placeholder_issues
     if placeholder_issues:
@@ -176,10 +189,14 @@ def run_doctor(
 
     if not skip_network:
         report["checks"]["connectors"] = check_connector_health(config)
-        report["checks"]["database"] = check_db_connectivity()
-        report["checks"]["imap"] = check_imap_connectivity()
-        report["checks"]["smtp"] = check_smtp_connectivity()
-        report["checks"]["notifiers"] = check_notifier_health(config)
+        if config.store["backend"] in {"postgres", "postgresql", "supabase"}:
+            report["checks"]["database"] = check_db_connectivity()
+        if config.mail.get("inbox"):
+            report["checks"]["imap"] = check_imap_connectivity(config.mail["inbox"], root=config.root)
+        if config.mail.get("outbox"):
+            report["checks"]["smtp"] = check_smtp_connectivity(config.mail["outbox"], root=config.root)
+        if config.notify:
+            report["checks"]["notifiers"] = check_notifier_health(config)
         for section, issues in report["checks"].items():
             if section == "profile_placeholders":
                 continue
@@ -191,6 +208,9 @@ def run_doctor(
             elif issues:
                 report["ok"] = False
                 report["issues"].extend(f"{section}: {entry}" for entry in issues)
+    if report["issues"]:
+        report["ok"] = False
+        report["status"] = "action_required"
     return report
 
 
@@ -226,32 +246,56 @@ def run_pipeline(
         raise ValueError(f"Unsupported pipeline type: {pipeline['type']}")
 
     profile = load_profile(pipeline["profile"], profile_dir=config.profile_dir)
-    manifest = prepare_jobboard_run(
-        profile_slug=profile.slug,
-        providers=pipeline["providers"],
-        output_dir=pipeline["output_dir"],
-        payload_dir=pipeline["payload_dir"],
-        include_db=pipeline["include_db"] and not dry_run,
-        fixture_dir=fixture_dir,
-        now=now,
-        max_pages=int(pipeline["max_pages"]),
-        detail_limit=pipeline.get("detail_limit"),
-    )
+    output_dir = config.resolve_path(pipeline["output_dir"])
+    payload_dir = config.resolve_path(pipeline["payload_dir"])
+    resolved_fixture_dir = config.resolve_path(fixture_dir) if fixture_dir else None
 
     stored: list[dict[str, Any]] = []
     if not dry_run and pipeline["include_db"]:
-        with connect() as conn:
+        with open_job_store(config.store, root=config.root) as store:
+            manifest = prepare_jobboard_run(
+                profile_slug=profile.slug,
+                providers=pipeline["providers"],
+                output_dir=output_dir,
+                payload_dir=payload_dir,
+                profile_dir=config.profile_dir,
+                root=config.root,
+                store=store,
+                config_path=config.sources[0],
+                include_db=True,
+                fixture_dir=resolved_fixture_dir,
+                now=now,
+                max_pages=int(pipeline["max_pages"]),
+                detail_limit=pipeline.get("detail_limit"),
+            )
             for provider_run in manifest.get("provider_runs") or []:
                 payload_path = provider_run.get("deduped_payload_path")
                 if not payload_path:
                     continue
-                result = upsert_run_payload(conn, provider_run["provider"], payload_path)
-                stored.append({"provider": provider_run["provider"], **result})
+                result = store.upsert_run_payload(provider_run["provider"], payload_path)
+                stored.append({"provider": provider_run["provider"], **vars(result)})
+    else:
+        manifest = prepare_jobboard_run(
+            profile_slug=profile.slug,
+            providers=pipeline["providers"],
+            output_dir=output_dir,
+            payload_dir=payload_dir,
+            profile_dir=config.profile_dir,
+            root=config.root,
+            include_db=False,
+            config_path=config.sources[0],
+            fixture_dir=resolved_fixture_dir,
+            now=now,
+            max_pages=int(pipeline["max_pages"]),
+            detail_limit=pipeline.get("detail_limit"),
+        )
 
     notifications: list[dict[str, Any]] = []
     channels = pipeline.get("notify_channels") or []
     if channels and not dry_run:
-        notifiers = [build_notifier(channel, config.notify[channel]) for channel in channels]
+        notifiers = [
+            build_notifier(channel, config.notify[channel], root=config.root) for channel in channels
+        ]
         report = RunReport(
             pipeline=pipeline_key,
             run_key=str(manifest["run"]["run_key"]),

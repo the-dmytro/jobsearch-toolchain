@@ -12,7 +12,6 @@ from typing import Any
 from .url_tools import clean_url
 from .utils import json_default, normalize_name, normalize_space, parse_timestamp, sha256_text
 
-
 DEFAULT_TRACKING_DIR = Path("Docs/Tracking")
 DEFAULT_JOBS_CSV = DEFAULT_TRACKING_DIR / "linkedin_jobs.csv"
 DEFAULT_ACTIVE_CSV = DEFAULT_TRACKING_DIR / "linkedin_applications_active.csv"
@@ -83,7 +82,20 @@ def _subtract_months(anchor: date, months: int) -> date:
     month_index = anchor.month - 1 - months
     year = anchor.year + month_index // 12
     month = month_index % 12 + 1
-    days_in_month = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    days_in_month = [
+        31,
+        29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ]
     return date(year, month, min(anchor.day, days_in_month[month - 1]))
 
 
@@ -95,7 +107,9 @@ def parse_applied_approx(value: str | None, as_of: date) -> date | None:
         return as_of
     if text in {"yesterday", "1d ago", "1 day ago"}:
         return as_of - timedelta(days=1)
-    match = re.match(r"^(\d+)\s*(d|day|days|w|wk|wks|week|weeks|mo|month|months|y|yr|yrs|year|years)\s+ago$", text)
+    match = re.match(
+        r"^(\d+)\s*(d|day|days|w|wk|wks|week|weeks|mo|month|months|y|yr|yrs|year|years)\s+ago$", text
+    )
     if match:
         amount = int(match.group(1))
         unit = match.group(2)
@@ -129,7 +143,9 @@ def _default_path(path: str | Path | None, default_path: Path) -> Path | None:
     return resolved if resolved.exists() else None
 
 
-def build_linkedin_job_records(path: str | Path | None = None) -> tuple[list[LinkedInJobRecord], list[dict[str, Any]]]:
+def build_linkedin_job_records(
+    path: str | Path | None = None,
+) -> tuple[list[LinkedInJobRecord], list[dict[str, Any]]]:
     csv_path = _default_path(path, DEFAULT_JOBS_CSV)
     if not csv_path:
         return [], []
@@ -140,10 +156,22 @@ def build_linkedin_job_records(path: str | Path | None = None) -> tuple[list[Lin
         company = normalize_space(row.get("company"))
         title = normalize_space(row.get("role_title") or row.get("role"))
         if not company or not title:
-            skipped.append({"source_file": str(csv_path), "row_number": row_number, "reason": "missing_company_or_title", "row": row})
+            skipped.append(
+                {
+                    "source_file": str(csv_path),
+                    "row_number": row_number,
+                    "reason": "missing_company_or_title",
+                    "row": row,
+                }
+            )
             continue
-        linkedin_job_id = normalize_space(row.get("linkedin_job_id")) or linkedin_job_id_from_url(row.get("job_url"))
-        record_id = normalize_space(row.get("record_id")) or sha256_text(f"{csv_path}|{row_number}|{company}|{title}")[:16]
+        linkedin_job_id = normalize_space(row.get("linkedin_job_id")) or linkedin_job_id_from_url(
+            row.get("job_url")
+        )
+        record_id = (
+            normalize_space(row.get("record_id"))
+            or sha256_text(f"{csv_path}|{row_number}|{company}|{title}")[:16]
+        )
         records.append(
             LinkedInJobRecord(
                 row_number=row_number,
@@ -180,10 +208,19 @@ def build_linkedin_application_records(
             company = normalize_space(row.get("company"))
             title = normalize_space(row.get("role") or row.get("role_title"))
             if not company or not title:
-                skipped.append({"source_file": str(csv_path), "row_number": row_number, "reason": "missing_company_or_title", "row": row})
+                skipped.append(
+                    {
+                        "source_file": str(csv_path),
+                        "row_number": row_number,
+                        "reason": "missing_company_or_title",
+                        "row": row,
+                    }
+                )
                 continue
             linkedin_job_id = linkedin_job_id_from_url(row.get("job_link") or row.get("job_url"))
-            status, current_stage, outcome, default_decline_reason = _status_from_stage(row.get("stage"), source_kind)
+            status, current_stage, outcome, default_decline_reason = _status_from_stage(
+                row.get("stage"), source_kind
+            )
             extra_info = normalize_space(row.get("extra_info"))
             decline_reason = extra_info or default_decline_reason if outcome == "declined" else None
             records.append(
@@ -216,13 +253,17 @@ def summarize_linkedin_tracking(
     app_records, app_skipped = build_linkedin_application_records(active_csv, archived_csv, as_of=as_of)
     app_statuses = Counter(record.status for record in app_records)
     app_sources = Counter(record.source_kind for record in app_records)
-    job_statuses = Counter(normalize_space(record.raw_row.get("status")) or "[blank]" for record in job_records)
+    job_statuses = Counter(
+        normalize_space(record.raw_row.get("status")) or "[blank]" for record in job_records
+    )
     return {
         "jobs_rows": len(job_records),
         "application_rows": len(app_records),
         "active_application_rows": app_sources.get("active", 0),
         "archived_application_rows": app_sources.get("archived", 0),
-        "declined_from_archived_rows": sum(1 for record in app_records if record.source_kind == "archived" and record.status == "declined"),
+        "declined_from_archived_rows": sum(
+            1 for record in app_records if record.source_kind == "archived" and record.status == "declined"
+        ),
         "linked_application_rows": sum(1 for record in app_records if record.job_url),
         "application_rows_with_linkedin_id": sum(1 for record in app_records if record.linkedin_job_id),
         "job_statuses": dict(job_statuses),
@@ -249,10 +290,14 @@ def _provider(conn: Any) -> str:
         return cur.fetchone()["id"]
 
 
-def _organization(conn: Any, company: str, metadata: dict[str, Any], company_domain: str | None = None) -> str:
+def _organization(
+    conn: Any, company: str, metadata: dict[str, Any], company_domain: str | None = None
+) -> str:
     domain = normalize_space(company_domain).lower()
     domains = [domain] if domain else []
-    website_url = f"https://{domain}" if domain and not domain.startswith(("http://", "https://")) else domain or None
+    website_url = (
+        f"https://{domain}" if domain and not domain.startswith(("http://", "https://")) else domain or None
+    )
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -306,12 +351,18 @@ def _find_existing_opportunity(
 ) -> str | None:
     with conn.cursor() as cur:
         if external_id:
-            cur.execute("select id from opportunities where provider_id = %s and external_id = %s", (provider_id, external_id))
+            cur.execute(
+                "select id from opportunities where provider_id = %s and external_id = %s",
+                (provider_id, external_id),
+            )
             row = cur.fetchone()
             if row:
                 return row["id"]
         if source_url:
-            cur.execute("select id from opportunities where provider_id = %s and source_url = %s order by created_at asc limit 1", (provider_id, source_url))
+            cur.execute(
+                "select id from opportunities where provider_id = %s and source_url = %s order by created_at asc limit 1",
+                (provider_id, source_url),
+            )
             row = cur.fetchone()
             if row:
                 return row["id"]
@@ -350,7 +401,9 @@ def _upsert_opportunity(
     metadata: dict[str, Any],
 ) -> str:
     organization_id = _organization(conn, company, {"linkedin_import": metadata}, company_domain=domain)
-    existing_id = _find_existing_opportunity(conn, provider_id, organization_id, title, external_id, source_url, location)
+    existing_id = _find_existing_opportunity(
+        conn, provider_id, organization_id, title, external_id, source_url, location
+    )
     params = (
         provider_id,
         organization_id,
@@ -436,7 +489,16 @@ def _upsert_opportunity(
         return cur.fetchone()["id"]
 
 
-def _upsert_source_item(conn: Any, provider_id: str, opportunity_id: str, source_type: str, external_id: str, source_url: str | None, title: str, metadata: dict[str, Any]) -> str:
+def _upsert_source_item(
+    conn: Any,
+    provider_id: str,
+    opportunity_id: str,
+    source_type: str,
+    external_id: str,
+    source_url: str | None,
+    title: str,
+    metadata: dict[str, Any],
+) -> str:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -468,7 +530,12 @@ def _upsert_source_item(conn: Any, provider_id: str, opportunity_id: str, source
 
 def _upsert_evaluation(conn: Any, provider_id: str, opportunity_id: str, record: LinkedInJobRecord) -> str:
     row = record.raw_row
-    metadata = {"linkedin_tracker_record_id": record.record_id, "source_file": record.source_file, "row_number": record.row_number, "raw_row": row}
+    metadata = {
+        "linkedin_tracker_record_id": record.record_id,
+        "source_file": record.source_file,
+        "row_number": record.row_number,
+        "raw_row": row,
+    }
     score = normalize_space(row.get("score"))
     with conn.cursor() as cur:
         cur.execute(
@@ -542,7 +609,9 @@ def _upsert_evaluation(conn: Any, provider_id: str, opportunity_id: str, record:
         return cur.fetchone()["id"]
 
 
-def _upsert_application(conn: Any, provider_id: str, opportunity_id: str, record: LinkedInApplicationRecord) -> str:
+def _upsert_application(
+    conn: Any, provider_id: str, opportunity_id: str, record: LinkedInApplicationRecord
+) -> str:
     row = record.raw_row
     metadata = {
         "linkedin_tracker_import": True,
@@ -638,7 +707,9 @@ def import_linkedin_tracking(
         "jobs": len(job_records),
         "applications": len(app_records),
         "active_applications": sum(1 for record in app_records if record.source_kind == "active"),
-        "archived_declined_applications": sum(1 for record in app_records if record.source_kind == "archived" and record.status == "declined"),
+        "archived_declined_applications": sum(
+            1 for record in app_records if record.source_kind == "archived" and record.status == "declined"
+        ),
         "evaluations": 0,
         "skipped": len(job_skipped) + len(app_skipped),
         "warnings": job_skipped + app_skipped,
@@ -699,7 +770,12 @@ def import_linkedin_tracking(
                 None,
                 _opportunity_payload_from_application(record),
             )
-            source_key = record.linkedin_job_id or sha256_text(f"{record.source_file}|{record.row_number}|{record.company}|{record.title}")[:16]
+            source_key = (
+                record.linkedin_job_id
+                or sha256_text(f"{record.source_file}|{record.row_number}|{record.company}|{record.title}")[
+                    :16
+                ]
+            )
             _upsert_source_item(
                 conn,
                 provider_id,

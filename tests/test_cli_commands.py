@@ -15,16 +15,18 @@ import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
 
 from jobtracker import cli as jobtracker_cli
 from jobtracker.mail.base import SendReceipt
+from jobtracker.store.generic.memory import MemoryJobStore
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO_ROOT / "jobtracker" / "fixtures" / "provider_fetch"
 TARGETS_PATH = REPO_ROOT / "jobtracker" / "fixtures" / "provider_targets.toml"
-TEMPLATE_DIR = REPO_ROOT / "profile" / "templates"
+TEMPLATE_DIR = REPO_ROOT / "profile" / "templates" / "generic"
 
 # `profile/` is gitignored, so a fresh clone has no templates to seed a root from.
 requires_profile_templates = unittest.skipUnless(
@@ -32,12 +34,11 @@ requires_profile_templates = unittest.skipUnless(
 )
 NOW = "2026-04-29T09:00:00+00:00"
 
-IOS_PROFILE_FILES = [
-    "profile/00_INSTRUCTIONS.md",
-    "profile/01_PREFERENCES.md",
-    "profile/04_LINKS_AND_CONTACTS.md",
-    "profile/05_ROLE_TARGETS.md",
-    "profile/CV_SOURCE.md",
+GENERIC_PROFILE_FILES = [
+    "profile/cv.md",
+    "profile/preferences.md",
+    "profile/project_evidence.md",
+    "profile/writing_style.md",
 ]
 
 
@@ -62,7 +63,7 @@ class ArgumentParsingTests(unittest.TestCase):
     def test_parser_wires_every_subcommand_to_a_handler(self) -> None:
         parser = jobtracker_cli.build_parser()
 
-        for command in ("doctor", "run", "init", "validate-payload", "benchmark-sources"):
+        for command in ("doctor", "run", "init", "fetch-source", "validate-payload", "benchmark-sources"):
             with self.subTest(command=command):
                 args = parser.parse_args(self._minimal_argv(command))
                 self.assertTrue(callable(args.func))
@@ -72,6 +73,7 @@ class ArgumentParsingTests(unittest.TestCase):
             "doctor": ["doctor", "--skip-network"],
             "run": ["run", "jobboards", "--dry-run"],
             "init": ["init"],
+            "fetch-source": ["fetch-source", "example_jsonld", "--dry-run"],
             "validate-payload": ["validate-payload", "--provider", "upwork", "--payload", "x.json"],
             "benchmark-sources": ["benchmark-sources", "--providers", "dou"],
         }[command]
@@ -90,7 +92,9 @@ class ArgumentParsingTests(unittest.TestCase):
 
         self.assertEqual(jobtracker_cli._payload_run_key(payload), "upwork-2026-05-12-0958")
         self.assertEqual(jobtracker_cli._provider_from_payload(Path("a.json"), payload, None), "upwork")
-        self.assertEqual(jobtracker_cli._provider_from_payload(Path("a.json"), payload, "LinkedIn"), "linkedin")
+        self.assertEqual(
+            jobtracker_cli._provider_from_payload(Path("a.json"), payload, "LinkedIn"), "linkedin"
+        )
         self.assertEqual(jobtracker_cli._provider_from_payload(Path("dou.payload.json"), {}, None), "dou")
 
     def test_main_maps_known_errors_to_exit_code_two(self) -> None:
@@ -102,6 +106,24 @@ class ArgumentParsingTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertIn("error:", buffer.getvalue())
+
+    def test_doctor_exit_codes_follow_the_v1_status(self) -> None:
+        args = argparse.Namespace(config=None, root=None, skip_network=True)
+        for status, expected in (("ready", 0), ("action_required", 1), ("error", 2)):
+            with self.subTest(status=status):
+                with mock.patch.object(
+                    jobtracker_cli,
+                    "run_doctor",
+                    return_value={
+                        "schema_version": 1,
+                        "status": status,
+                        "ok": status == "ready",
+                        "issues": [],
+                        "checks": {},
+                    },
+                ):
+                    exit_code, _payload = run_command(jobtracker_cli.cmd_doctor, **vars(args))
+                self.assertEqual(exit_code, expected)
 
 
 @requires_profile_templates
@@ -121,7 +143,7 @@ class InitAndDoctorCommandTests(CliTestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn(str(self.root / "config" / "jobsearch.toml"), payload["created"])
-        self.assertTrue((self.root / "profile" / "ios.toml").exists())
+        self.assertTrue((self.root / "profile" / "generic.toml").exists())
 
     def test_cmd_doctor_returns_one_when_the_project_is_incomplete(self) -> None:
         self.seed_project()
@@ -138,7 +160,7 @@ class InitAndDoctorCommandTests(CliTestCase):
     def test_cmd_doctor_returns_zero_for_a_complete_project(self) -> None:
         self.seed_project()
         run_command(jobtracker_cli.cmd_init, root=str(self.root), force=False)
-        for relative_path in IOS_PROFILE_FILES:
+        for relative_path in GENERIC_PROFILE_FILES:
             path = self.root / relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("Resolved content.\n", encoding="utf-8")
@@ -175,7 +197,9 @@ class FetchCommandTests(CliTestCase):
             with self.subTest(provider=provider):
                 payload_out = self.root / f"{provider}.payload.json"
 
-                exit_code, summary = run_command(handler, **self.fetch_namespace(payload_out=str(payload_out)))
+                exit_code, summary = run_command(
+                    handler, **self.fetch_namespace(payload_out=str(payload_out))
+                )
 
                 self.assertEqual(exit_code, 0)
                 self.assertEqual(summary["provider"], provider)
@@ -183,6 +207,33 @@ class FetchCommandTests(CliTestCase):
                 self.assertGreaterEqual(summary["opportunities"], 1)
                 written = json.loads(payload_out.read_text(encoding="utf-8"))
                 self.assertEqual(len(written["opportunities"]), summary["opportunities"])
+
+    def test_fetch_source_uses_config_and_selected_root(self) -> None:
+        (self.root / "config").mkdir()
+        shutil.copyfile(
+            REPO_ROOT / "config" / "jobsearch.example.toml",
+            self.root / "config" / "jobsearch.toml",
+        )
+        payload_out = self.root / "outputs" / "example.payload.json"
+
+        exit_code, summary = run_command(
+            jobtracker_cli.cmd_fetch_source,
+            source="example_jsonld",
+            root=str(self.root),
+            config=None,
+            dry_run=True,
+            payload_out="outputs/example.payload.json",
+            fixture_dir=str(FIXTURE_DIR),
+            now=NOW,
+            max_pages=1,
+            detail_limit=1,
+            targets=None,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["provider"], "example-jsonld")
+        self.assertGreaterEqual(summary["opportunities"], 1)
+        self.assertTrue(payload_out.exists())
 
     def test_greenhouse_fetch_accepts_board_tokens(self) -> None:
         exit_code, summary = run_command(
@@ -213,7 +264,9 @@ class FetchCommandTests(CliTestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["mode"], "fixture")
-        self.assertEqual([item["provider"] for item in payload["results"]], ["dou", "workua", "djinni", "greenhouse"])
+        self.assertEqual(
+            [item["provider"] for item in payload["results"]], ["dou", "workua", "djinni", "greenhouse"]
+        )
 
     def test_benchmark_reports_failures_per_provider_instead_of_raising(self) -> None:
         _exit_code, payload = run_command(
@@ -266,10 +319,41 @@ class PayloadCommandTests(CliTestCase):
         normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
         self.assertEqual(normalized["opportunities"][0]["external_id"], "022047650000881711706")
 
+    def test_upsert_run_uses_configured_sqlite_store(self) -> None:
+        (self.root / "config").mkdir()
+        shutil.copyfile(
+            REPO_ROOT / "config/jobsearch.example.toml",
+            self.root / "config/jobsearch.toml",
+        )
+        payload_path = self.write_payload(
+            "payloads/example.payload.json",
+            {
+                "run": {"run_key": "example-2026-04-29", "status": "completed"},
+                "source_items": [],
+                "opportunities": [],
+            },
+        )
+
+        exit_code, result = run_command(
+            jobtracker_cli.cmd_upsert_run,
+            provider="example",
+            payload=str(payload_path),
+            report=None,
+            root=str(self.root),
+            config=None,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["run_key"], "example-2026-04-29")
+        self.assertTrue((self.root / "outputs/jobsearch.sqlite3").exists())
+
     def test_validate_payload_returns_one_for_invalid_payloads(self) -> None:
         payload_path = self.write_payload(
             "bad.json",
-            {"run": {"run_key": "linkedin-2026-05-12", "status": "completed"}, "opportunities": [{"company": "Acme"}]},
+            {
+                "run": {"run_key": "linkedin-2026-05-12", "status": "completed"},
+                "opportunities": [{"company": "Acme"}],
+            },
         )
 
         exit_code, summary = run_command(
@@ -289,7 +373,11 @@ class PayloadCommandTests(CliTestCase):
             {
                 "run": {"run_key": "upwork-2026-05-10", "finished_at": "2026-05-10T10:00:00+00:00"},
                 "opportunities": [
-                    {"external_id": "022047650000881711706", "company": "Acme Apps", "title": "Senior iOS Engineer"}
+                    {
+                        "external_id": "022047650000881711706",
+                        "company": "Acme Apps",
+                        "title": "Senior iOS Engineer",
+                    }
                 ],
             },
         )
@@ -314,7 +402,11 @@ class PayloadCommandTests(CliTestCase):
                     "report_email_sent": True,
                 },
                 "opportunities": [
-                    {"external_id": "022047650000881711706", "company": "Acme Apps", "title": "Senior iOS Engineer"}
+                    {
+                        "external_id": "022047650000881711706",
+                        "company": "Acme Apps",
+                        "title": "Senior iOS Engineer",
+                    }
                 ],
             },
         )
@@ -323,7 +415,11 @@ class PayloadCommandTests(CliTestCase):
             {
                 "run": {"run_key": "upwork-2026-05-12"},
                 "opportunities": [
-                    {"external_id": "~022047650000881711706", "company": "Acme Apps", "title": "Senior iOS Engineer"}
+                    {
+                        "external_id": "~022047650000881711706",
+                        "company": "Acme Apps",
+                        "title": "Senior iOS Engineer",
+                    }
                 ],
             },
         )
@@ -417,8 +513,97 @@ class PayloadCommandTests(CliTestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["synced"], 0)
 
+    def test_sync_pending_runs_uses_the_selected_target_store(self) -> None:
+        payload_dir = self.root / "payloads"
+        self.write_payload(
+            "payloads/example.payload.json",
+            {"run": {"run_key": "example-2026-04-29"}, "opportunities": []},
+        )
+        memory = MemoryJobStore()
+
+        @contextlib.contextmanager
+        def fake_store(options, *, root):
+            self.assertEqual(options["backend"], "postgres")
+            yield memory
+
+        with mock.patch.object(jobtracker_cli, "open_job_store", side_effect=fake_store):
+            exit_code, payload = run_command(
+                jobtracker_cli.cmd_sync_pending_runs,
+                payload_dir=str(payload_dir),
+                provider=None,
+                state_db=str(self.root / "state.sqlite"),
+                dry_run=False,
+                keep_going=False,
+                target_store="postgres",
+                root=str(self.root),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["target_store"], "postgres")
+        self.assertEqual(payload["synced"], 1)
+        self.assertIn("example-2026-04-29", memory.runs)
+
 
 class MailCommandTests(CliTestCase):
+    def test_fetch_mail_folder_uses_root_relative_maildir_and_rules_parser(self) -> None:
+        config_dir = self.root / "config"
+        config_dir.mkdir()
+        (config_dir / "jobsearch.toml").write_text(
+            """\
+schema_version = 1
+
+[store]
+backend = "sqlite"
+
+[pipelines.fixture]
+type = "jobboard"
+profile = "generic"
+providers = ["example"]
+
+[mail.inbox]
+kind = "maildir"
+path = "private-mail"
+
+[mail.parsers.example]
+kind = "rules"
+senders = ["alerts@provider.example"]
+subject_patterns = ["new role"]
+link_patterns = ["https://jobs\\\\.example/jobs/\\\\d+"]
+provider_slug = "example"
+""",
+            encoding="utf-8",
+        )
+        message_dir = self.root / "private-mail" / "new"
+        message_dir.mkdir(parents=True)
+        message = EmailMessage()
+        message["Message-ID"] = "<fixture-1@provider.example>"
+        message["From"] = "alerts@provider.example"
+        message["To"] = "candidate@example.test"
+        message["Subject"] = "A new role is available"
+        message.set_content("Apply at https://jobs.example/jobs/42")
+        (message_dir / "fixture-1.eml").write_bytes(message.as_bytes())
+
+        exit_code, payload = run_command(
+            jobtracker_cli.cmd_fetch_mail_folder,
+            provider="example",
+            folder=None,
+            label=None,
+            since=None,
+            limit=None,
+            no_provider_filter=False,
+            state_db="outputs/state.sqlite",
+            run_key="example-mail-1",
+            output="outputs/example.source.json",
+            root=str(self.root),
+            config=None,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["source_items"][0]["provider_slug"], "example")
+        self.assertEqual(payload["source_items"][0]["links"], ["https://jobs.example/jobs/42"])
+        self.assertTrue((self.root / "outputs/example.source.json").exists())
+        self.assertTrue((self.root / "outputs/state.sqlite").exists())
+
     def test_send_report_email_is_idempotent(self) -> None:
         body_file = self.root / "body.txt"
         body_file.write_text("Two roles worth a look.\n", encoding="utf-8")
@@ -512,7 +697,7 @@ class RunPipelineCommandTests(CliTestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertTrue(payload["dry_run"])
-        self.assertEqual(payload["manifest"]["run"]["run_key"], "ua-jobboards-2026-04-29")
+        self.assertEqual(payload["manifest"]["run"]["run_key"], "job-search-2026-04-29")
 
     def test_cmd_run_rejects_unknown_pipelines(self) -> None:
         (self.root / "config").mkdir()

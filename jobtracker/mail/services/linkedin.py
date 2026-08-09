@@ -4,12 +4,24 @@ import re
 from typing import Any
 
 from ...config import load_settings
-from ...utils import normalize_name, normalize_space
+from ...utils import normalize_name
 from ..base import AlertParser
 
-
-_LINKEDIN_ALERT_TERMS = ("job", "jobs", "job alert", "new jobs", "top job", "you may be a fit", "saved job", "recommended")
-_LINKEDIN_ALERT_SENDERS = {"jobalerts-noreply@linkedin.com", "jobs-listings@linkedin.com", "jobs-noreply@linkedin.com"}
+_LINKEDIN_ALERT_TERMS = (
+    "job",
+    "jobs",
+    "job alert",
+    "new jobs",
+    "top job",
+    "you may be a fit",
+    "saved job",
+    "recommended",
+)
+_LINKEDIN_ALERT_SENDERS = {
+    "jobalerts-noreply@linkedin.com",
+    "jobs-listings@linkedin.com",
+    "jobs-noreply@linkedin.com",
+}
 _LINKEDIN_APPLICATION_TERMS = (
     "application was sent",
     "application received",
@@ -78,11 +90,7 @@ class LinkedInAlertParser(AlertParser):
     def parse(self, message: dict[str, Any]) -> dict[str, Any] | None:
         if not self.matches(message):
             return None
-        job_links = [
-            link
-            for link in message.get("links") or []
-            if "linkedin.com/jobs/view/" in link.lower()
-        ]
+        job_links = [link for link in message.get("links") or [] if "linkedin.com/jobs/view/" in link.lower()]
         return {
             "source_type": message.get("source_type") or "email",
             "external_id": message.get("external_id") or message.get("message_id"),

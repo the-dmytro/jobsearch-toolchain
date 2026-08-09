@@ -6,7 +6,6 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULT_MAIL_FOLDER_ALIASES: dict[str, list[str]] = {
     "upwork": ["Upwork", "upwork", "job/Upwork", "Job/Upwork", "Jobs/Alerts/Upwork", "Job/Alerts/Upwork"],
     "linkedin": ["job/LinkedIn", "Job/LinkedIn", "Jobs/Alerts/LinkedIn", "Job/Alerts/LinkedIn"],
@@ -88,8 +87,8 @@ def load_settings() -> Settings:
         secret_key=os.getenv("SUPABASE_SECRET_KEY"),
         service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
         storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "job-artifacts"),
-        store_backend=os.getenv("JOBTRACKER_STORE_BACKEND", "postgres"),
-        artifact_backend=os.getenv("JOBTRACKER_ARTIFACT_BACKEND", "supabase"),
+        store_backend=os.getenv("JOBTRACKER_STORE_BACKEND", "sqlite"),
+        artifact_backend=os.getenv("JOBTRACKER_ARTIFACT_BACKEND", "local"),
         mail_folder_aliases=_load_mail_folder_aliases(),
         own_report_senders=_load_own_report_senders(),
         s3_artifact_bucket=os.getenv("JOBTRACKER_S3_ARTIFACT_BUCKET"),

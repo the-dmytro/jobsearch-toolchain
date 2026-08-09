@@ -14,8 +14,8 @@ try:
 except ImportError:  # pragma: no cover - exercised in minimal environments
     BeautifulSoup = None
 
-from ..base import RawMessage
 from ...utils import normalize_space
+from ..base import RawMessage
 
 
 def _clean_message_id(value: str | None) -> str | None:
@@ -80,7 +80,11 @@ class _LinkAndTextParser(HTMLParser):
 def _parse_html(html: str) -> tuple[str, list[str]]:
     if BeautifulSoup is not None:
         soup = BeautifulSoup(html, "html.parser")
-        links = [unescape(normalize_space(tag.get("href"))) for tag in soup.find_all("a") if normalize_space(tag.get("href"))]
+        links = [
+            unescape(normalize_space(tag.get("href")))
+            for tag in soup.find_all("a")
+            if normalize_space(tag.get("href"))
+        ]
         return normalize_space(soup.get_text(" ")), links
     parser = _LinkAndTextParser()
     parser.feed(html)
@@ -105,7 +109,9 @@ def parse_email_message(raw_message: bytes) -> dict[str, Any]:
     message = BytesParser(policy=policy.default).parsebytes(raw_message)
     plain_parts = _iter_parts(message, "text/plain")
     html_parts = _iter_parts(message, "text/html")
-    text = normalize_space("\n".join(plain_parts)) or normalize_space(" ".join(_html_to_text(part) for part in html_parts))
+    text = normalize_space("\n".join(plain_parts)) or normalize_space(
+        " ".join(_html_to_text(part) for part in html_parts)
+    )
     links: list[str] = []
     for html in html_parts:
         links.extend(_html_links(html))
@@ -136,7 +142,8 @@ def raw_message_from_dict(message: dict[str, Any]) -> RawMessage:
     metadata = {
         key: value
         for key, value in message.items()
-        if key not in {
+        if key
+        not in {
             "source_type",
             "message_id",
             "external_id",
