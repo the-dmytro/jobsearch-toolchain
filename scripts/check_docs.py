@@ -21,6 +21,7 @@ UNSUPPORTED = {
 JOBTRACKER_COMMANDS = {
     "benchmark-sources",
     "build-local-index",
+    "calendar",
     "check-duplicates",
     "db-smoke",
     "dedupe-candidates",

@@ -60,6 +60,23 @@ python -m jobtracker send-report-email \
 `discover-gmail-labels` and `fetch-gmail-label` are compatibility aliases.
 `parse-upwork-alerts` remains available for the existing Upwork message format.
 
+## Calendar
+
+The optional calendar commands use `[calendar]`, plus `[mail.inbox]` for `--imap` and
+`[mail.outbox]` for sending a reply. See [Calendar](onboarding/CALENDAR.md).
+
+```bash
+python -m jobtracker calendar calendars
+python -m jobtracker calendar list --grep acme
+python -m jobtracker calendar parse --eml invite.eml --out outputs/calendar/spec.json
+python -m jobtracker calendar apply outputs/calendar/spec.json --dry-run
+python -m jobtracker calendar cancel --key manual:acme:screen-2030-01-15 --reason "moved" --evidence imap://Jobs/42
+```
+
+Subcommands: `calendars`, `list`, `parse`, `apply`, `update`, `cancel`, `delete`,
+`export`, and `reply`. `delete` needs `--yes`. `reply --send` also needs `--confirm-send`
+because it sends a message on the user's behalf.
+
 ## Payloads, dedupe, and store switching
 
 ```bash

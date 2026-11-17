@@ -40,3 +40,15 @@ exclude_terms = ["intern", "manager"]
 # kind = "imap"
 # [mail.outbox]
 # kind = "smtp"
+
+# Calendar is opt-in: keeps interview events in step with invites and mail.
+# Credentials come from .env (user_env/password_env name the variables).
+# [calendar]
+# kind = "caldav"                      # or "icsdir" with path = "outputs/calendar" for offline use
+# url = "https://caldav.example.com/"  # CalDAV discovery root
+# calendar = "Interviews"
+# default_timezone = "UTC"
+# alarms_minutes = [60, 15]
+# cancel_prefix = "Cancelled: "
+# user_env = "JOBTRACKER_CALDAV_USER"
+# password_env = "JOBTRACKER_CALDAV_PASSWORD"

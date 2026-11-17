@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 import shutil
 from contextlib import nullcontext
 from datetime import datetime
@@ -9,6 +11,8 @@ from typing import Any
 from .app_config.loader import EXAMPLE_CONFIG_PATH, AppConfig, load_app_config
 from .app_config.profiles import JobboardProfile, load_profile
 from .app_config.schema import ConfigValidationError, scan_profile_placeholders
+from .calendar.events import settings_from_options
+from .calendar.registry import build_calendar_backend
 from .config import load_settings
 from .core.models import CollectionContext, FetchMetrics
 from .db import connect
@@ -187,6 +191,12 @@ def run_doctor(
         report["ok"] = False
         report["issues"].extend(item["issue"] for item in placeholder_issues)
 
+    if config.calendar:
+        report["checks"]["calendar"] = check_calendar_config(config, skip_network=skip_network)
+        if report["checks"]["calendar"]:
+            report["ok"] = False
+            report["issues"].extend(f"calendar: {entry}" for entry in report["checks"]["calendar"])
+
     if not skip_network:
         report["checks"]["connectors"] = check_connector_health(config)
         if config.store["backend"] in {"postgres", "postgresql", "supabase"}:
@@ -198,7 +208,7 @@ def run_doctor(
         if config.notify:
             report["checks"]["notifiers"] = check_notifier_health(config)
         for section, issues in report["checks"].items():
-            if section == "profile_placeholders":
+            if section in ("profile_placeholders", "calendar"):
                 continue
             if isinstance(issues, dict):
                 for name, entries in issues.items():
@@ -212,6 +222,21 @@ def run_doctor(
         report["ok"] = False
         report["status"] = "action_required"
     return report
+
+
+def check_calendar_config(config: AppConfig, *, skip_network: bool = False) -> list[str]:
+    """Validate the optional [calendar] section; with network, also ask the backend for health."""
+    try:
+        settings_from_options(config.calendar, os.environ)
+        backend = build_calendar_backend(config.calendar, root=config.root)
+    except (ValueError, RuntimeError, LookupError, re.error) as exc:
+        return [str(exc)]
+    if skip_network:
+        return []
+    try:
+        return list(backend.health())
+    except Exception as exc:  # pragma: no cover - plugin backends
+        return [f"health check failed: {type(exc).__name__}"]
 
 
 def _iter_config_profiles(config: AppConfig) -> list[JobboardProfile]:

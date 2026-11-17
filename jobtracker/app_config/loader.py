@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ class AppConfig:
     pipelines: dict[str, dict[str, Any]]
     notify: dict[str, dict[str, Any]]
     sources: list[Path]
+    calendar: dict[str, Any] = field(default_factory=dict)
 
     def resolve_path(self, value: str | Path) -> Path:
         path = Path(value).expanduser()
@@ -111,4 +112,5 @@ def load_app_config(
         pipelines=validated["pipelines"],
         notify=validated["notify"],
         sources=sources,
+        calendar=validated["calendar"],
     )
