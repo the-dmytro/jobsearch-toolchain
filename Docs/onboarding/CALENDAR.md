@@ -98,7 +98,8 @@ Text-only classification uses English keywords. Add patterns for other languages
 - Cancelling keeps the event; deleting needs `--yes`. Re-applying the same spec returns `unchanged` and writes nothing.
 - Every write is verified by reading the event back (`"verified": true`).
 - Notes end with `— jobsearch: managed event; key=...`, followed by a short change history and the source evidence.
-- Updates to one occurrence of a recurring series (`RECURRENCE-ID`) return `manual`; handle them in the calendar app.
+- The tool writes single events only. Recurring invites (`RRULE`), updates to one occurrence (`RECURRENCE-ID`), and changes to an existing recurring series return `manual`; handle them in the calendar app.
+- Cancellations are version-checked like invites: an older `CANCEL` arriving after a newer invite is skipped as `stale`. A newer invite with unchanged details still records its `SEQUENCE`/`DTSTAMP`.
 - Some servers reject a CalDAV UID filter (HTTP 412). Lookup therefore uses a direct GET of the object, then a time window around the expected start, then a full scan of the calendar.
 
 Revoke access by deleting the app-specific password at the provider and removing the `.env` entries.

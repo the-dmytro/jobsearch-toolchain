@@ -267,10 +267,12 @@ class ParseTests(unittest.TestCase):
         self.assertIn("30 minutes assumed", s2["source"]["time_notes"])
 
     def test_floating_needs_zone(self) -> None:
-        (s,) = ics_to_specs(FLOATING)
-        self.assertFalse(s["timezone_confirmed"])
-        self.assertTrue(validate_spec(s))
+        (s,) = ics_to_specs(FLOATING)  # default settings: UTC assumed, not confirmed
+        self.assertEqual((s["timezone"], s["timezone_confirmed"]), ("UTC", False))
+        self.assertIn("floating time in source; assumed UTC", s["source"]["time_notes"])
+        self.assertEqual(validate_spec(s), [])
         (s2,) = ics_to_specs(FLOATING, default_tz="Europe/Madrid")
+        self.assertEqual(s2["timezone"], "Europe/Madrid")
         self.assertEqual(validate_spec(s2), [])
         self.assertFalse(s2["timezone_confirmed"])
 
@@ -438,6 +440,45 @@ class ApplyFlowTests(unittest.TestCase):
         recurring = GOOGLE_REQUEST.replace("SEQUENCE:0", "RECURRENCE-ID:20301201T143000Z\r\nSEQUENCE:0")
         (s,) = ics_to_specs(recurring)
         self.assertEqual(self.apply(s)["result"], "manual")
+
+    def test_recurring_master_is_not_flattened(self) -> None:
+        weekly = GOOGLE_REQUEST.replace("SEQUENCE:0", "RRULE:FREQ=WEEKLY;COUNT=4\r\nSEQUENCE:0")
+        (s,) = ics_to_specs(weekly)
+        self.assertEqual(self.apply(s)["result"], "manual")
+        self.assertEqual(self.backend.objects, {})
+        # An existing (unmanaged) series is not rewritten even with --allow-unmanaged.
+        self.backend.objects[CAL + "series.ics"] = ('"s1"', weekly.replace("METHOD:REQUEST\r\n", ""))
+        (c,) = ics_to_specs(cancel_of(GOOGLE_REQUEST))
+        self.assertEqual(self.apply(c, allow_unmanaged=True)["result"], "manual")
+        self.assertEqual(self.backend.objects[CAL + "series.ics"][0], '"s1"')
+
+    def test_stale_cancel_does_not_cancel_newer_invite(self) -> None:
+        (s,) = ics_to_specs(moved_invite())  # SEQUENCE 2
+        self.apply(s)
+        (old_cancel,) = ics_to_specs(cancel_of(GOOGLE_REQUEST, seq=1))
+        result = self.apply(old_cancel)
+        self.assertEqual(result["result"], "skipped")
+        self.assertIn("stale", result["reason"])
+        ((_, (_, ics)),) = self.backend.objects.items()
+        ev = I.parse_ical(ics).sub("VEVENT")[0]
+        self.assertEqual(ev.value("STATUS"), "CONFIRMED")
+        self.assertEqual(len(ev.sub("VALARM")), 2)
+
+    def test_newer_identical_invite_advances_watermark(self) -> None:
+        (first,) = ics_to_specs(GOOGLE_REQUEST)  # SEQUENCE 0
+        self.apply(first)
+        (same_details,) = ics_to_specs(GOOGLE_REQUEST.replace("SEQUENCE:0", "SEQUENCE:3"))
+        self.assertEqual(self.apply(same_details)["result"], "updated")
+        self.assertEqual(self.apply(same_details)["result"], "unchanged")
+        (obsolete,) = ics_to_specs(moved_invite())  # SEQUENCE 2, changed time
+        self.assertEqual(self.apply(obsolete)["result"], "skipped")
+
+    def test_floating_invite_uses_configured_default_zone(self) -> None:
+        settings = CalendarSettings(default_timezone="Europe/London")
+        (s,) = ics_to_specs(FLOATING, settings=settings)
+        self.assertEqual((s["timezone"], s["timezone_confirmed"]), ("Europe/London", False))
+        result = CalendarService(self.backend, CAL, settings).apply(s)
+        self.assertEqual((result["result"], result["start_utc"]), ("created", "20300120T100000Z"))
 
     def test_lookup_avoids_full_scan_when_direct_get_hits(self) -> None:
         (s,) = ics_to_specs(GOOGLE_REQUEST)
