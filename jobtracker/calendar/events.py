@@ -229,8 +229,9 @@ def vevent_to_spec(
     settings: CalendarSettings | None = None,
 ) -> dict[str, Any]:
     settings = settings or CalendarSettings()
-    start = parse_when(ev.get("DTSTART"), cal, default_tz)
-    end = parse_when(ev.get("DTEND"), cal, default_tz)
+    fallback_tz = default_tz or settings.default_timezone
+    start = parse_when(ev.get("DTSTART"), cal, fallback_tz)
+    end = parse_when(ev.get("DTEND"), cal, fallback_tz)
     time_notes = list(dict.fromkeys(w.note for w in (start, end) if w and w.note))
     if start and not end:
         duration = parse_duration(ev.value("DURATION"))
@@ -501,20 +502,38 @@ def _same(name: str, a: Mapping[str, Any], b: Mapping[str, Any], settings: Calen
     return a.get(name) == b.get(name)
 
 
-def _source_newer(spec: Mapping[str, Any], found: Found) -> tuple[bool, str]:
+def _source_versions(spec: Mapping[str, Any], found: Found) -> tuple[int, int, str, str] | None:
+    """``(new_seq, old_seq, new_stamp, old_stamp)`` for an invite-sourced spec, else ``None``."""
     source = spec.get("source") or {}
     if source.get("type") != "ics":
-        return True, ""
+        return None
     stored_seq = found.event.value("X-JOBSEARCH-SOURCE-SEQUENCE")
     old_seq = int(stored_seq) if stored_seq.lstrip("-").isdigit() else -1
     new_seq = int(source.get("sequence") or 0)
+    old_stamp = found.event.value("X-JOBSEARCH-SOURCE-DTSTAMP")
+    new_stamp = str(source.get("dtstamp") or "")
+    return new_seq, old_seq, new_stamp, old_stamp
+
+
+def _source_newer(spec: Mapping[str, Any], found: Found) -> tuple[bool, str]:
+    versions = _source_versions(spec, found)
+    if versions is None:
+        return True, ""
+    new_seq, old_seq, new_stamp, old_stamp = versions
     if new_seq < old_seq:
         return False, f"stale: source SEQUENCE {new_seq} < stored {old_seq}"
-    old_stamp = found.event.value("X-JOBSEARCH-SOURCE-DTSTAMP")
-    new_stamp = source.get("dtstamp")
     if new_seq == old_seq and old_stamp and new_stamp and new_stamp < old_stamp:
         return False, f"stale: same SEQUENCE and older DTSTAMP ({new_stamp} < {old_stamp})"
     return True, ""
+
+
+def _source_advanced(spec: Mapping[str, Any], found: Found) -> bool:
+    """True when the spec's invite version is strictly newer than the stored watermark."""
+    versions = _source_versions(spec, found)
+    if versions is None:
+        return False
+    new_seq, old_seq, new_stamp, old_stamp = versions
+    return new_seq > old_seq or (new_seq == old_seq and bool(new_stamp) and new_stamp > old_stamp)
 
 
 class CalendarService:
@@ -617,6 +636,12 @@ class CalendarService:
                 "reason": "update to one occurrence of a recurring event (RECURRENCE-ID); "
                 "not supported, handle it in the calendar app",
             }
+        if action != "delete" and (work.get("source") or {}).get("rrule"):
+            return {
+                "result": "manual",
+                "reason": "recurring invite (RRULE); this tool writes single events only, "
+                "handle the series in the calendar app",
+            }
         around = None
         if work.get("start") and not work.get("all_day"):
             try:
@@ -632,6 +657,13 @@ class CalendarService:
                 "reason": "event exists but was not created by this tool; "
                 "ask the user, then rerun with --allow-unmanaged",
             }
+        if found and action != "delete" and (found.event.get("RRULE") or found.event.get("RDATE")):
+            return {
+                "result": "manual",
+                "reason": "the calendar event is a recurring series; rewriting it would drop "
+                "later occurrences, handle it in the calendar app",
+                "url": found.url,
+            }
         evidence = (work.get("source") or {}).get("evidence", "")
         if action == "delete":
             if not found:
@@ -642,6 +674,9 @@ class CalendarService:
         if action == "cancel":
             if not found:
                 return {"result": "not_found", "uid": work["uid"], "reason": "nothing to cancel"}
+            ok, why = _source_newer(work, found)
+            if not ok:
+                return {"result": "skipped", "reason": why}
             base = self.spec_of(found)
             base["status"] = "cancelled"
             base["cancel_reason"] = (
@@ -676,7 +711,9 @@ class CalendarService:
                 )
                 if prev.get(name) != work.get(name)
             ]
-            if found.managed and not changes and not other:
+            # A newer invite version with identical details still advances the stored
+            # SEQUENCE/DTSTAMP watermark, so an older invite arriving later stays stale.
+            if found.managed and not changes and not other and not _source_advanced(work, found):
                 return {"result": "unchanged", "url": found.url, "uid": work["uid"], "key": work["key"]}
             history = list(prev.get("history", []))
             if changes:
