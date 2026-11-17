@@ -6,4 +6,5 @@ All plugin entry points use [`ConnectorBuildContext`](../contracts/connector-api
 - [Mail connector](writing-a-mail-connector.md)
 - [Store connector](writing-a-store.md)
 - [Notifier connector](writing-a-notifier.md)
+- [Calendar connector](writing-a-calendar-connector.md)
 - [Installable fixture package](../../examples/plugins/fixture-connectors/README.md)

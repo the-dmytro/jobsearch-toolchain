@@ -32,6 +32,8 @@ jobtracker = "jobtracker.cli:main"
 
 [project.entry-points."jobtracker.notifiers"]
 
+[project.entry-points."jobtracker.calendars"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jobtracker*"]
