@@ -35,6 +35,7 @@ Collect and confirm, in manageable groups:
 - chosen search sources and any service-specific target identifiers;
 - optional mail inbox, alert parsers, outbound mail, and report recipient;
 - optional notifications and channels;
+- optional interview calendar (CalDAV or a local `.ics` directory) and whether the agent may write evidenced interview events to it;
 - SQLite or optional PostgreSQL/Supabase storage;
 - optional CRM;
 - desired automation cadence, quiet periods, and failure notifications.
@@ -58,7 +59,7 @@ Run `git status --ignored --short` and confirm private files are ignored. Never 
 3. Offline doctor ready.
 4. Fixture pipeline persisted to local SQLite and replayed with the same run key.
 5. Selected live sources.
-6. Optional mail and notifications.
+6. Optional mail, calendar, and notifications.
 7. Optional PostgreSQL/Supabase and CRM.
 8. Optional scheduling.
 
