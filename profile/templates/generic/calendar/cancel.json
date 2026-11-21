@@ -1,0 +1,7 @@
+{
+  "_comment": "Cancellation from a text-only e-mail. The event is kept, marked as cancelled, and its alarms are removed. To remove it instead: `jobtracker calendar delete --key <key> --yes`, only when the user asks.",
+  "action": "cancel",
+  "key": "manual:<company-slug>:<stage>-<yyyy-mm-dd>",
+  "cancel_reason": "<reason from the e-mail; 'no new date given' if so>",
+  "source": {"type": "email", "evidence": "imap://<folder>/<uid>"}
+}

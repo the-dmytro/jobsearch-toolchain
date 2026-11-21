@@ -127,6 +127,13 @@ class MailImapClient:
             messages.append(parsed)
         return messages
 
+    def fetch_raw(self, folder: str, uid: str) -> bytes | None:
+        """Return one message's raw bytes by UID without marking it as read."""
+        status, _ = self.conn.select(f'"{folder}"', readonly=True)
+        if status != "OK":
+            raise RuntimeError(f"IMAP SELECT failed for {folder!r}: {status}")
+        return self._fetch_message_bytes(uid.encode("ascii"))
+
     def _fetch_message_bytes(self, uid: bytes) -> bytes | None:
         for fetch_spec in ("(BODY.PEEK[])", "(RFC822)"):
             status, fetched = self.conn.uid("fetch", uid, fetch_spec)

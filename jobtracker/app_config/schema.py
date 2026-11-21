@@ -103,12 +103,30 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
     mail_raw = _require_mapping(root.get("mail", {}), "mail")
     mail = dict(mail_raw)
 
+    calendar = dict(_require_mapping(root.get("calendar", {}), "calendar"))
+    if calendar:
+        calendar["kind"] = _require_str(calendar.get("kind", "caldav"), "calendar.kind").lower()
+        for name in ("calendar", "url", "calendar_url", "default_timezone", "path"):
+            if name in calendar:
+                _require_str(calendar[name], f"calendar.{name}")
+        alarms = calendar.get("alarms_minutes", [])
+        if not isinstance(alarms, list) or not all(
+            isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in alarms
+        ):
+            raise ConfigValidationError("calendar.alarms_minutes must be an array of non-negative integers")
+        for secret in ("password", "user", "token"):
+            if secret in calendar:
+                raise ConfigValidationError(
+                    f"calendar.{secret} must not be stored in TOML; use {secret}_env and .env"
+                )
+
     return {
         "schema_version": 1,
         "paths": validated_paths,
         "store": store,
         "sources": sources,
         "mail": mail,
+        "calendar": calendar,
         "pipelines": pipelines,
         "notify": notify,
     }

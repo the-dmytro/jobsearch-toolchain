@@ -5,12 +5,20 @@ import json
 import os
 import sys
 from contextlib import contextmanager, nullcontext
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .app_config.loader import load_app_config
 from .automation import run_doctor, run_pipeline, scaffold_config
 from .automation_state import AutomationStateStore
+from .calendar.base import CalendarInfo
+from .calendar.base import calendar_url as resolve_calendar_url
+from .calendar.events import CalendarService, build_reply, ics_to_specs, key_to_uid, settings_from_options
+from .calendar.ical import aware, serialize
+from .calendar.mail import parse_message
+from .calendar.registry import build_calendar_backend
+from .calendar.reply import send_reply
 from .config import load_env_file
 from .db import MissingConfigurationError, MissingDependencyError, connect, connect_test
 from .dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
@@ -648,6 +656,307 @@ def cmd_prepare_jobboard_run(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- calendar
+
+
+def _calendar_root(args: argparse.Namespace) -> Path:
+    return Path(getattr(args, "root", None) or ".")
+
+
+def _calendar_path(args: argparse.Namespace, value: str | Path) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else _calendar_root(args) / path
+
+
+def _calendar_setup(args: argparse.Namespace):
+    root = _calendar_root(args)
+    load_env_file(root / ".env")
+    config = _optional_app_config(args)
+    options = dict(config.calendar) if config else {}
+    settings = settings_from_options(options, os.environ)
+    if getattr(args, "calendar", None):
+        settings = replace(settings, calendar=args.calendar)
+    return config, options, settings
+
+
+def _calendar_service(args: argparse.Namespace):
+    config, options, settings = _calendar_setup(args)
+    if not options:
+        raise MissingConfigurationError(
+            "calendar is not configured: add a [calendar] table to config/jobsearch.toml "
+            "(see Docs/onboarding/CALENDAR.md)"
+        )
+    root = config.root if config else _calendar_root(args)
+    backend = build_calendar_backend(options, root=root)
+    fixed = str(options.get("calendar_url") or "") if not getattr(args, "calendar", None) else ""
+    cal_url = fixed or resolve_calendar_url(backend, settings.calendar)
+    return CalendarService(backend, cal_url, settings), backend
+
+
+def _calendar_ident(args: argparse.Namespace) -> str:
+    if getattr(args, "uid", None):
+        return args.uid
+    if getattr(args, "key", None):
+        return key_to_uid(args.key)
+    raise ValueError("pass --key or --uid")
+
+
+def _fetch_imap_message(args: argparse.Namespace, ref: str) -> tuple[bytes, str]:
+    if ":" not in ref:
+        raise ValueError("--imap expects FOLDER:UID")
+    folder, uid = ref.rsplit(":", 1)
+    config = _optional_app_config(args)
+    inbox = dict(((config.mail.get("inbox") if config else None) or {}))
+    allowed = {key: inbox[key] for key in ("host", "user") if inbox.get(key)}
+    with MailImapClient(**allowed) as client:
+        raw = client.fetch_raw(folder, uid)
+    if not raw:
+        raise ValueError(f"message {ref} not found")
+    return raw, f"imap://{folder}/{uid}"
+
+
+def cmd_calendar_calendars(args: argparse.Namespace) -> int:
+    config, options, _ = _calendar_setup(args)
+    if not options:
+        raise MissingConfigurationError("calendar is not configured: add a [calendar] table")
+    backend = build_calendar_backend(options, root=config.root if config else _calendar_root(args))
+    items: list[CalendarInfo] = backend.calendars()
+    _print_json([{"name": item.name, "url": item.url} for item in items])
+    return 0
+
+
+def cmd_calendar_list(args: argparse.Namespace) -> int:
+    service, _ = _calendar_service(args)
+    tz = service.settings.default_timezone
+    now = datetime.now(timezone.utc)
+    start = aware(args.date_from, None, tz) if args.date_from else now - timedelta(days=30)
+    end = aware(args.date_to, None, tz) if args.date_to else now + timedelta(days=90)
+    rows = service.list_events(start, end, grep=args.grep, managed_only=args.managed_only)
+    if args.json:
+        _print_json(rows)
+        return 0
+    for row in rows:
+        flags = ("M" if row["managed"] else "-") + ("R" if row["recurring"] else " ")
+        print(
+            f"{row['start_local']}  {flags} {row['status'][:4]}  {row['title']}  [{row['key'] or row['uid']}]"
+        )
+    return 0
+
+
+def cmd_calendar_parse(args: argparse.Namespace) -> int:
+    _, _, settings = _calendar_setup(args)
+    if args.ics:
+        path = _calendar_path(args, args.ics)
+        result = {
+            "evidence": str(args.ics),
+            "specs": ics_to_specs(path.read_text(encoding="utf-8"), str(args.ics), args.default_tz, settings),
+        }
+    else:
+        if args.eml:
+            raw, evidence = _calendar_path(args, args.eml).read_bytes(), str(args.eml)
+        else:
+            raw, evidence = _fetch_imap_message(args, args.imap)
+        result = parse_message(raw, evidence, args.default_tz, settings)
+    if args.out:
+        out = _calendar_path(args, args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _print_json(result)
+    return 0
+
+
+def _load_specs(args: argparse.Namespace, settings) -> list[dict]:
+    if args.ics:
+        path = _calendar_path(args, args.ics)
+        return ics_to_specs(path.read_text(encoding="utf-8"), args.evidence or str(args.ics), None, settings)
+    if not args.spec:
+        raise ValueError("pass a spec file or --ics")
+    data = json.loads(_calendar_path(args, args.spec).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and "specs" in data:
+        return list(data["specs"])
+    return list(data) if isinstance(data, list) else [data]
+
+
+def cmd_calendar_apply(args: argparse.Namespace) -> int:
+    service, _ = _calendar_service(args)
+    specs = _load_specs(args, service.settings)
+    results = [
+        service.apply(spec, dry_run=args.dry_run, allow_unmanaged=args.allow_unmanaged) for spec in specs
+    ]
+    _print_json(results)
+    return 1 if any(item.get("result") == "invalid" for item in results) else 0
+
+
+def _calendar_found(args: argparse.Namespace):
+    service, _ = _calendar_service(args)
+    uid = _calendar_ident(args)
+    return service, uid, service.find(uid)
+
+
+def cmd_calendar_update(args: argparse.Namespace) -> int:
+    service, uid, found = _calendar_found(args)
+    if not found:
+        _print_json({"result": "not_found", "uid": uid})
+        return 1
+    spec = service.patch(
+        found,
+        start=args.start,
+        end=args.end,
+        timezone_name=args.timezone,
+        title=args.title,
+        meeting_url=args.meeting_url,
+        location=args.location,
+        notes_append=args.notes_append,
+        evidence=args.evidence,
+        reconfirm=args.reconfirm,
+    )
+    _print_json(service.apply(spec, dry_run=args.dry_run, allow_unmanaged=args.allow_unmanaged))
+    return 0
+
+
+def cmd_calendar_cancel(args: argparse.Namespace) -> int:
+    service, uid, found = _calendar_found(args)
+    if not found:
+        _print_json({"result": "not_found", "uid": uid})
+        return 1
+    delete = args.calendar_command == "delete" or getattr(args, "delete", False)
+    if delete and not args.yes and not args.dry_run:
+        raise ValueError("deleting removes the event for good: add --yes (cancel keeps it marked)")
+    spec = {
+        "action": "cancel",
+        "key": found.event.value("X-JOBSEARCH-KEY") or uid,
+        "uid": uid,
+        "cancel_reason": getattr(args, "reason", None) or "",
+        "source": {"type": "manual", "evidence": getattr(args, "evidence", None) or ""},
+    }
+    _print_json(
+        service.apply(spec, dry_run=args.dry_run, allow_unmanaged=args.allow_unmanaged, delete=delete)
+    )
+    return 0
+
+
+def cmd_calendar_export(args: argparse.Namespace) -> int:
+    service, uid, found = _calendar_found(args)
+    if not found:
+        _print_json({"result": "not_found", "uid": uid})
+        return 1
+    if args.format == "ics":
+        sys.stdout.write(serialize(found.cal))
+    else:
+        _print_json(service.spec_of(found))
+    return 0
+
+
+def cmd_calendar_reply(args: argparse.Namespace) -> int:
+    config, _, settings = _calendar_setup(args)
+    ics_text = _calendar_path(args, args.ics).read_text(encoding="utf-8")
+    ics, to, subject, attendee = build_reply(ics_text, args.partstat, args.me, settings)
+    out = _calendar_path(args, args.out) if args.out else None
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(ics, encoding="utf-8")
+    if not args.send:
+        _print_json(
+            {
+                "result": "built",
+                "to": to,
+                "subject": subject,
+                "from_attendee": attendee,
+                "out": str(out or ""),
+            }
+        )
+        if not out:
+            sys.stdout.write(ics)
+        return 0
+    if not args.confirm_send:
+        raise ValueError(
+            "sending a reply is a message on the user's behalf: get approval, then add --confirm-send"
+        )
+    outbox = dict(((config.mail.get("outbox") if config else None) or {}))
+    _print_json(send_reply(ics, to, subject, attendee, outbox=outbox, env=os.environ))
+    return 0
+
+
+def _add_calendar_parser(subparsers) -> None:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
+    common.add_argument("--root", help="Project root directory")
+    common.add_argument("--calendar", help="Calendar name (default: [calendar].calendar)")
+    calendar = subparsers.add_parser(
+        "calendar", help="Keep interview events in a calendar in step with mail (CalDAV or .ics directory)"
+    )
+    sub = calendar.add_subparsers(dest="calendar_command", required=True)
+
+    sub.add_parser("calendars", parents=[common], help="List calendars (read-only)").set_defaults(
+        func=cmd_calendar_calendars
+    )
+
+    listing = sub.add_parser("list", parents=[common], help="List events in a window")
+    listing.add_argument("--from", dest="date_from", help="Start (ISO date/time; default 30 days ago)")
+    listing.add_argument("--to", dest="date_to", help="End (ISO date/time; default 90 days ahead)")
+    listing.add_argument("--grep", help="Regular expression matched against title and notes")
+    listing.add_argument("--managed-only", action="store_true", help="Only events written by this tool")
+    listing.add_argument("--json", action="store_true", help="Print JSON rows")
+    listing.set_defaults(func=cmd_calendar_list)
+
+    parse = sub.add_parser("parse", parents=[common], help="Classify an invite or e-mail into event specs")
+    source = parse.add_mutually_exclusive_group(required=True)
+    source.add_argument("--ics", help="iCalendar file")
+    source.add_argument("--eml", help="RFC 822 message file")
+    source.add_argument("--imap", help="FOLDER:UID from the configured inbox (read-only)")
+    parse.add_argument("--default-tz", help="Zone for floating times; marked as unconfirmed")
+    parse.add_argument("--out", help="Write the result JSON to this file")
+    parse.set_defaults(func=cmd_calendar_parse)
+
+    apply = sub.add_parser("apply", parents=[common], help="Create/update/cancel/delete from specs")
+    apply.add_argument("spec", nargs="?", help="Spec JSON: one object, a list, or `parse` output")
+    apply.add_argument("--ics", help="Apply an iCalendar invite directly")
+    apply.add_argument("--evidence", default="", help="Evidence reference recorded in the event")
+    apply.add_argument("--dry-run", action="store_true", help="Show the result and iCalendar; write nothing")
+    apply.add_argument("--allow-unmanaged", action="store_true", help="Also change events not made here")
+    apply.set_defaults(func=cmd_calendar_apply)
+
+    for name, helptext, func in (
+        ("update", "Patch one managed event", cmd_calendar_update),
+        ("cancel", "Mark a managed event as cancelled (kept, alarms removed)", cmd_calendar_cancel),
+        ("delete", "Remove a managed event for good (needs --yes)", cmd_calendar_cancel),
+        ("export", "Print the stored spec (JSON) or raw iCalendar", cmd_calendar_export),
+    ):
+        command = sub.add_parser(name, parents=[common], help=helptext)
+        command.add_argument("--key", help="Event key, e.g. invite:<UID> or manual:<slug>")
+        command.add_argument("--uid", help="Calendar object UID")
+        if name != "export":
+            command.add_argument("--dry-run", action="store_true", help="Show the result; write nothing")
+            command.add_argument(
+                "--allow-unmanaged", action="store_true", help="Also change unmanaged events"
+            )
+        if name == "update":
+            for option in ("start", "end", "timezone", "title", "meeting-url", "location", "notes-append"):
+                command.add_argument(f"--{option}")
+            command.add_argument("--evidence", help="Evidence reference for the change")
+            command.add_argument("--reconfirm", action="store_true", help="Clear a cancellation")
+        if name == "cancel":
+            command.add_argument("--reason", required=True, help="Cancellation reason")
+            command.add_argument("--evidence", required=True, help="Evidence reference")
+            command.add_argument("--delete", action="store_true", help="Delete instead of marking")
+        if name in ("cancel", "delete"):
+            command.add_argument("--yes", action="store_true", help="Confirm a permanent delete")
+        if name == "export":
+            command.add_argument("--format", choices=("json", "ics"), default="json")
+        command.set_defaults(func=func)
+
+    reply = sub.add_parser("reply", parents=[common], help="Build (and optionally send) an iTIP REPLY")
+    reply.add_argument("--ics", required=True, help="The invite to answer")
+    reply.add_argument("--partstat", choices=("ACCEPTED", "DECLINED", "TENTATIVE"), required=True)
+    reply.add_argument("--as", dest="me", help="Attendee address to answer as")
+    reply.add_argument("--out", help="Write the REPLY iCalendar to this file")
+    reply.add_argument("--send", action="store_true", help="Send through the configured SMTP outbox")
+    reply.add_argument(
+        "--confirm-send", action="store_true", help="The user approved this exact reply; required with --send"
+    )
+    reply.set_defaults(func=cmd_calendar_reply)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobtracker", description="Local-first job search automation and tracking CLI"
@@ -994,6 +1303,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--fixture-dir", help=argparse.SUPPRESS)
     run_cmd.add_argument("--now", help=argparse.SUPPRESS)
     run_cmd.set_defaults(func=cmd_run)
+
+    _add_calendar_parser(subparsers)
 
     return parser
 

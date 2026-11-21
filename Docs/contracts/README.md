@@ -9,4 +9,6 @@ Current frozen contracts:
 - `CONNECTOR-V1` and `STORE-V1`: `Docs/contracts/connector-api-v1.md`
 - `DOCTOR-V1`: `schemas/doctor-report.v1.schema.json`
 
+`CFG-V1` amendment 1 adds the optional `[calendar]` table; `CONNECTOR-V1` amendment 1 adds the optional `jobtracker.calendars` group. Both are backward compatible: existing configs and connectors are unaffected.
+
 Do not change a frozen contract without updating its version or documenting a backward-compatible amendment and refreshing every dependent test and guide.

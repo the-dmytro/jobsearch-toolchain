@@ -60,6 +60,47 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/connectorConfig" }
     },
+    "calendar": {
+      "type": "object",
+      "description": "Optional calendar connector (v0.2 backward-compatible amendment).",
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "default": "caldav" },
+        "calendar": { "type": "string", "minLength": 1, "default": "Interviews" },
+        "url": { "type": "string", "minLength": 1 },
+        "calendar_url": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "user_env": { "type": "string", "minLength": 1, "default": "JOBTRACKER_CALDAV_USER" },
+        "password_env": { "type": "string", "minLength": 1, "default": "JOBTRACKER_CALDAV_PASSWORD" },
+        "self_emails_env": {
+          "type": "string",
+          "minLength": 1,
+          "default": "JOBTRACKER_CALENDAR_SELF_EMAILS"
+        },
+        "default_timezone": { "type": "string", "minLength": 1, "default": "UTC" },
+        "alarms_minutes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "default": [60, 15]
+        },
+        "cancel_prefix": { "type": "string", "default": "Cancelled: " },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "text_rules": {
+          "type": "object",
+          "properties": {
+            "cancel_existing": { "$ref": "#/$defs/patternList" },
+            "reschedule": { "$ref": "#/$defs/patternList" },
+            "reply_to_recruiter": { "$ref": "#/$defs/patternList" },
+            "verify_existing": { "$ref": "#/$defs/patternList" },
+            "manual_spec": { "$ref": "#/$defs/patternList" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "not": {
+        "anyOf": [{ "required": ["user"] }, { "required": ["password"] }, { "required": ["token"] }]
+      },
+      "additionalProperties": true
+    },
     "pipelines": {
       "type": "object",
       "minProperties": 1,
@@ -99,6 +140,10 @@
   "required": ["schema_version", "store", "pipelines"],
   "additionalProperties": false,
   "$defs": {
+    "patternList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "connectorConfig": {
       "type": "object",
       "properties": {
