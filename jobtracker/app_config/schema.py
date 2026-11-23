@@ -18,9 +18,6 @@ def _require_mapping(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
-POSTGRES_TRANSPORTS = ("direct", "supabase_https")
-
-
 def _require_str(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigValidationError(f"{path} must be a non-empty string")
@@ -105,18 +102,19 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
         raise ConfigValidationError(
             "store.required_backend was removed: store.backend is the only database choice."
         )
+    if "transport" in store_raw:
+        raise ConfigValidationError(
+            "store.transport was renamed to store.connector (postgres_direct or supabase_https)."
+        )
     if backend == "postgres":
-        if "transport" not in store_raw:
-            raise ConfigValidationError(
-                'store.transport is required for PostgreSQL: "direct" (PostgreSQL protocol, '
-                'JOBTRACKER_DATABASE_URL) or "supabase_https" (HTTPS, works behind HTTP-only proxies).'
-            )
-        transport = _require_str(store_raw["transport"], "store.transport").lower()
-        if transport not in POSTGRES_TRANSPORTS:
-            raise ConfigValidationError(f"store.transport must be one of: {', '.join(POSTGRES_TRANSPORTS)}")
-        store["transport"] = transport
-    elif "transport" in store_raw:
-        raise ConfigValidationError('store.transport applies only to store.backend = "postgres"')
+        if "connector" in store_raw:
+            store["connector"] = _require_str(store_raw["connector"], "store.connector").lower()
+        if "hosting" in store_raw:
+            store["hosting"] = _require_str(store_raw["hosting"], "store.hosting").lower()
+    else:
+        for key in ("connector", "hosting"):
+            if key in store_raw:
+                raise ConfigValidationError(f'store.{key} applies only to store.backend = "postgres"')
     if "text_retention" in store_raw:
         from ..store.compact import normalize_text_retention
 

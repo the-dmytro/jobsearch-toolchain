@@ -59,10 +59,10 @@ class CliTestCase(unittest.TestCase):
         self.root = Path(self._temp.name)
 
     def write_store_config(self, backend: str) -> None:
-        transport = '\ntransport = "direct"' if backend == "postgres" else ""
+        connector_line = '\nconnector = "postgres_direct"' if backend == "postgres" else ""
         (self.root / "config").mkdir(exist_ok=True)
         (self.root / "config/jobsearch.toml").write_text(
-            f'schema_version = 1\n[store]\nbackend = "{backend}"{transport}\n', encoding="utf-8"
+            f'schema_version = 1\n[store]\nbackend = "{backend}"{connector_line}\n', encoding="utf-8"
         )
 
 

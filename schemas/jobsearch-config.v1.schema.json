@@ -71,12 +71,15 @@
           "minimum": 0,
           "default": 24
         },
-        "transport": {
-          "enum": [
-            "direct",
-            "supabase_https"
-          ],
-          "description": "Required when backend is postgres."
+        "connector": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Database connector for this environment, e.g. postgres_direct or supabase_https. Usually set in config/environments/<name>.toml."
+        },
+        "hosting": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the database is hosted, only if known (e.g. supabase)."
         }
       },
       "additionalProperties": true,

@@ -204,7 +204,7 @@ class PortabilityDbTests(unittest.TestCase):
     def test_cli_documents_prune_and_compact(self) -> None:
         (self.root / "config").mkdir()
         (self.root / "config/jobsearch.toml").write_text(
-            'schema_version = 1\n[store]\nbackend = "postgres"\ntransport = "direct"\nprune_min_age_hours = 0\n',
+            'schema_version = 1\n[store]\nbackend = "postgres"\nconnector = "postgres_direct"\nprune_min_age_hours = 0\n',
             encoding="utf-8",
         )
         note = self.root / "notes/company.md"
@@ -309,3 +309,29 @@ class PortabilityDbTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_test_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
+class ProbeAgainstDatabaseTests(unittest.TestCase):
+    def test_direct_connector_is_reported_available(self) -> None:
+        from jobtracker.probe import probe_environment
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            (root / "config/jobsearch.toml").write_text(
+                'schema_version = 1\n[store]\nbackend = "postgres"\nconnector = "postgres_direct"\n',
+                encoding="utf-8",
+            )
+            env = {
+                "JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"],
+                "JOBTRACKER_ENVIRONMENT": "",
+            }
+            with mock.patch.dict(os.environ, env):
+                probe = probe_environment(root, timeout=3)
+        direct = next(
+            item for item in probe["database"]["candidates"] if item["connector"] == "postgres_direct"
+        )
+        self.assertEqual(direct["status"], "available")
+        self.assertTrue(direct["selected"])
+        self.assertIn("query succeeded", direct["evidence"])

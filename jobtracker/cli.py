@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .app_config.loader import load_app_config
-from .automation import run_doctor, run_pipeline, scaffold_config
+from .automation import run_doctor, run_pipeline, scaffold_config, scaffold_environment
 from .automation_state import AutomationStateStore, open_automation_state
 from .cli_portability import register as register_portability
 from .config import load_env_file
@@ -40,9 +40,33 @@ def _print_json(value) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    result = scaffold_config(
-        root=Path(args.root), force=args.force, template=getattr(args, "template", "local")
-    )
+    root = Path(args.root)
+    result = scaffold_config(root=root, force=args.force, template=getattr(args, "template", "local"))
+    environment = getattr(args, "environment", None)
+    connector = getattr(args, "connector", None)
+    if bool(environment) != bool(connector):
+        raise ValueError("--environment and --connector are used together")
+    if environment:
+        if getattr(args, "template", "local") != "shared":
+            raise ValueError("--environment needs --template shared")
+        result["environment"] = scaffold_environment(
+            root=root,
+            environment=environment,
+            connector=connector,
+            hosting=getattr(args, "hosting", None),
+            force=args.force,
+        )
+        hosting = getattr(args, "hosting", None)
+        if hosting:
+            config_path = root / "config" / "jobsearch.toml"
+            text = config_path.read_text(encoding="utf-8")
+            marker = '# hosting = "supabase"'
+            if marker in text:
+                config_path.write_text(
+                    text.replace(marker, f'hosting = "{hosting.strip().lower()}"', 1), encoding="utf-8"
+                )
+                result["hosting"] = hosting.strip().lower()
+        result["next_step"] = f"set JOBTRACKER_ENVIRONMENT={environment} in this environment"
     _print_json(result)
     return 0
 
@@ -84,6 +108,17 @@ def _configured_postgres(args: argparse.Namespace):
     config = _store_config(args)
     with connect_postgres(config.store) as conn:
         yield conn
+
+
+def cmd_probe_environment(args: argparse.Namespace) -> int:
+    from .probe import format_probe, probe_environment
+
+    result = probe_environment(Path(args.root).resolve(), timeout=args.timeout)
+    if getattr(args, "format", "json") == "text":
+        print(format_probe(result))
+    else:
+        _print_json(result)
+    return 0
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
@@ -193,8 +228,8 @@ def cmd_db_smoke(args: argparse.Namespace) -> int:
         target = {"target": "SUPABASE_TEST_DB_URL"}
     else:
         config = _store_config(args)
-        if args.write_test and config.store.get("transport") == "supabase_https":
-            raise ValueError("--write-test needs a rollback, which the supabase_https transport cannot do")
+        if args.write_test and config.store.get("connector") == "supabase_https":
+            raise ValueError("--write-test needs a rollback, which the supabase_https connector cannot do")
         connection = connect_postgres(config.store)
         target = describe_store(config.store, root=config.root)
     with connection as conn:
@@ -510,7 +545,7 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     if config is not None and canonical_backend(config.store.get("backend")) != target_store:
         raise MissingConfigurationError(
             f"sync-pending-runs writes to the configured store; set [store].backend = {target_store!r} "
-            "(with its transport) before replaying."
+            "(with its connector) before replaying."
         )
     payload_paths = sorted(payload_dir.rglob("*.payload.json"))
     synced = 0
@@ -1087,10 +1122,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_cmd.add_argument("--force", action="store_true", help="Overwrite existing scaffolded files")
     init_cmd.add_argument(
         "--template",
-        choices=["local", "cloud"],
+        choices=["local", "shared"],
         default="local",
-        help="local: SQLite on this machine; cloud: shared Supabase over HTTPS",
+        help="local: SQLite on this machine; shared: one PostgreSQL database for several environments",
     )
+    init_cmd.add_argument("--environment", help="With --template shared: environment name to create")
+    init_cmd.add_argument(
+        "--connector", help="With --environment: postgres_direct, supabase_https or a plugin"
+    )
+    init_cmd.add_argument("--hosting", help="Optional: where the database is hosted, if the user said so")
     init_cmd.set_defaults(func=cmd_init)
 
     doctor = subparsers.add_parser("doctor", help="Validate config, connectors, and profile placeholders")
@@ -1115,6 +1155,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.set_defaults(func=cmd_run)
 
     register_portability(subparsers)
+
+    probe = subparsers.add_parser(
+        "probe-environment", help="Report what this environment can reach and which store connectors fit"
+    )
+    probe.add_argument("--root", default=".", help="Project root directory")
+    probe.add_argument("--timeout", type=float, default=5.0, help="Seconds per network check")
+    probe.add_argument("--format", choices=["json", "text"], default="json")
+    probe.set_defaults(func=cmd_probe_environment)
 
     return parser
 

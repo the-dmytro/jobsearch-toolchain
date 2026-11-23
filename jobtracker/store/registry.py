@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from jobtracker.config import load_settings
 from jobtracker.core.connectors import ConnectorSpec
 from jobtracker.core.models import ConnectorBuildContext
 from jobtracker.core.registry import Registry
-from jobtracker.db import MissingConfigurationError, _host_from_db_url, connect
+from jobtracker.db import MissingConfigurationError
 from jobtracker.utils import normalize_space
 
 from .base import JobStore
@@ -45,29 +43,38 @@ def canonical_backend(value: Any) -> str:
     return "postgres" if backend in POSTGRES_ALIASES else backend
 
 
-def postgres_transport(options: dict[str, Any]) -> str:
-    transport = normalize_space(str(options.get("transport") or "")).lower()
-    if transport not in {"direct", "supabase_https"}:
+def postgres_connector(options: dict[str, Any]) -> Any:
+    """The single database connector named by ``store.connector``; checked against ``store.hosting``."""
+    from .connectors import get_connector
+
+    name = normalize_space(str(options.get("connector") or "")).lower()
+    if not name:
         raise MissingConfigurationError(
-            'store.transport must be "direct" or "supabase_https" for the PostgreSQL store.'
+            "store.connector is required for the PostgreSQL store (for example postgres_direct or "
+            "supabase_https). Set it in config/environments/<environment>.toml."
         )
-    return transport
+    connector = get_connector(name)
+    hosting = normalize_space(str(options.get("hosting") or "")).lower()
+    if hosting and connector.info.hosting not in {"any", hosting}:
+        raise MissingConfigurationError(
+            f"store.connector {name!r} only works with {connector.info.hosting!r} hosting, "
+            f"but store.hosting is {hosting!r}."
+        )
+    if connector.info.dialect != "postgres":
+        raise MissingConfigurationError(
+            f"store.connector {name!r} speaks {connector.info.dialect!r}; the postgres store needs a postgres connector."
+        )
+    return connector
 
 
 @contextmanager
 def connect_postgres(options: dict[str, Any]) -> Iterator[Any]:
-    """Open the configured PostgreSQL transport. There is no automatic alternative."""
+    """Open the one configured connector. There is no automatic alternative."""
     if canonical_backend(options.get("backend")) != "postgres":
         raise MissingConfigurationError(
             f"This command needs the PostgreSQL store, but store.backend is {options.get('backend')!r}."
         )
-    if postgres_transport(options) == "supabase_https":
-        from .https_sql import connect_https
-
-        with connect_https() as conn:
-            yield conn
-        return
-    with connect() as conn:
+    with postgres_connector(options).connect(options) as conn:
         yield conn
 
 
@@ -78,13 +85,18 @@ def describe_store(options: dict[str, Any], *, root: Path) -> dict[str, Any]:
         target = str(_resolved_path(root, options.get("sqlite_path") or "outputs/jobsearch.sqlite3"))
         return {"backend": "sqlite", "target": target, "shared": False}
     if backend == "postgres":
-        transport = postgres_transport(options)
-        if transport == "supabase_https":
-            url = normalize_space(os.getenv("SUPABASE_URL")) if load_settings() else ""
-            host = url.split("://", 1)[-1].split("/", 1)[0] if url else "unconfigured"
-        else:
-            host = _host_from_db_url(load_settings().db_url) or "unconfigured"
-        return {"backend": "postgres", "transport": transport, "target": host, "shared": True}
+        connector = postgres_connector(options)
+        receipt = {
+            "backend": "postgres",
+            "connector": connector.info.name,
+            "target": connector.target(options),
+            "shared": True,
+        }
+        if options.get("hosting"):
+            receipt["hosting"] = options["hosting"]
+        if options.get("environment"):
+            receipt["environment"] = options["environment"]
+        return receipt
     if backend == "memory":
         return {"backend": "memory", "target": "process memory", "shared": False}
     return {"backend": backend, "target": "plugin", "shared": None}
@@ -119,6 +131,6 @@ __all__ = [
     "connect_postgres",
     "describe_store",
     "open_job_store",
-    "postgres_transport",
+    "postgres_connector",
     "store_registry",
 ]

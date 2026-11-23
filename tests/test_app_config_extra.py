@@ -185,18 +185,17 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
             validate_jobsearch_config({})
         self.assertIn("no fallback", str(caught.exception))
         with self.assertRaises(ConfigValidationError):
-            validate_jobsearch_config({"store": {"backend": "postgres"}})
+            validate_jobsearch_config({"store": {"backend": "postgres", "transport": "direct"}})
         with self.assertRaises(ConfigValidationError):
-            validate_jobsearch_config({"store": {"backend": "postgres", "transport": "carrier-pigeon"}})
-        with self.assertRaises(ConfigValidationError):
-            validate_jobsearch_config({"store": {"backend": "sqlite", "transport": "direct"}})
+            validate_jobsearch_config({"store": {"backend": "sqlite", "connector": "postgres_direct"}})
         with self.assertRaises(ConfigValidationError):
             validate_jobsearch_config({"store": {"backend": "sqlite", "required_backend": "sqlite"}})
         validated = validate_jobsearch_config(
-            {"store": {"backend": "supabase", "transport": "supabase_https"}}
+            {"store": {"backend": "supabase", "connector": "Supabase_HTTPS", "hosting": "Supabase"}}
         )
         self.assertEqual(validated["store"]["backend"], "postgres")
-        self.assertEqual(validated["store"]["transport"], "supabase_https")
+        self.assertEqual(validated["store"]["connector"], "supabase_https")
+        self.assertEqual(validated["store"]["hosting"], "supabase")
 
     def test_unknown_schema_version_is_rejected(self) -> None:
         with self.assertRaises(ConfigValidationError):

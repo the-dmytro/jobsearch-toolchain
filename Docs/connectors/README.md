@@ -5,5 +5,6 @@ All plugin entry points use [`ConnectorBuildContext`](../contracts/connector-api
 - [Source connector](writing-a-source.md)
 - [Mail connector](writing-a-mail-connector.md)
 - [Store connector](writing-a-store.md)
+- [Database connector (how a store reaches its database)](writing-a-database-connector.md)
 - [Notifier connector](writing-a-notifier.md)
 - [Installable fixture package](../../examples/plugins/fixture-connectors/README.md)
