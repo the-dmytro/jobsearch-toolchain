@@ -75,7 +75,7 @@ only after a read back that matches the stored content hash.
 ## Confirmed applications
 
 ```bash
-python -m jobtracker record-application --file application.json
+python -m jobtracker record-application --file application.json --job-text-file posting.txt
 ```
 
 ```json
@@ -98,6 +98,7 @@ python -m jobtracker record-application --file application.json
 The command reconciles by every known ID and alias. It never creates a second
 application for the same opportunity and does not repeat existing events. Replays of
 payloads with an `application` object also update instead of duplicating.
+`--job-text-file` (or a `job_text` field) keeps the full posting in `opportunity_texts`.
 
 ## Local cleanup
 

@@ -193,7 +193,8 @@ class PortabilityDbTests(unittest.TestCase):
                 "salary_requested_max": 75000,
                 "salary_requested_currency": "EUR",
             }
-            one = record_application(conn, record)
+            one = record_application(conn, {**record, "job_text": "Posting text " * 20})
+            self.assertTrue(one["stored_job_text"])
             two = record_application(conn, {**record, "external_id": "ats:req-9", "external_id_aliases": []})
             self.assertEqual(one["application_id"], two["application_id"])
             self.assertEqual(one["inserted_events"], 1)

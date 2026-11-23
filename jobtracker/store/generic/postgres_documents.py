@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from ...utils import json_default, normalize_name, normalize_space, slugify
-from ..compact import compact_facts, sha256_text
+from ..compact import compact_facts, excerpt, sha256_text
 
 DOCUMENT_KINDS = (
     "report",
@@ -313,6 +313,28 @@ def record_application(conn: Any, record: dict[str, Any]) -> dict[str, Any]:
                     "description": record.get("evidence"),
                 }
             ]
+        job_text = record.get("job_text")
+        stored_job_text = False
+        if isinstance(job_text, str) and normalize_space(job_text):
+            from .postgres import _store_opportunity_text
+
+            stored_job_text = _store_opportunity_text(
+                conn,
+                opportunity_id,
+                job_text,
+                "application",
+                normalize_space(record.get("job_text_source")) or None,
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    update opportunities
+                    set description_sha256 = coalesce(description_sha256, %s),
+                        description_excerpt = coalesce(description_excerpt, %s)
+                    where id = %s
+                    """,
+                    (sha256_text(normalize_space(job_text)), excerpt(job_text), opportunity_id),
+                )
         inserted_events = 0
         for event in events:
             event_type = normalize_space(event.get("event_type"))
@@ -365,6 +387,7 @@ def record_application(conn: Any, record: dict[str, Any]) -> dict[str, Any]:
         "application_id": application_id,
         "opportunity_id": opportunity_id,
         "inserted_events": inserted_events,
+        "stored_job_text": stored_job_text,
         "readback": readback,
         "verified": True,
     }

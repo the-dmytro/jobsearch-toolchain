@@ -120,6 +120,10 @@ def cmd_documents_get(args: argparse.Namespace) -> int:
 def cmd_record_application(args: argparse.Namespace) -> int:
     config = _config(args)
     record = json.loads(config.resolve_path(args.file).read_text(encoding="utf-8"))
+    if args.job_text_file:
+        job_text_path = config.resolve_path(args.job_text_file)
+        record["job_text"] = job_text_path.read_text(encoding="utf-8")
+        record.setdefault("job_text_source", str(job_text_path.name))
     if args.dry_run:
         _print_json({"dry_run": True, "record": record})
         return 0
@@ -321,6 +325,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     common(record)
     record.add_argument("--file", required=True, help="JSON record; see Docs/cli.md")
+    record.add_argument("--job-text-file", help="Full posting text to keep for this application")
     record.add_argument("--dry-run", action="store_true")
     record.set_defaults(func=cmd_record_application)
 
