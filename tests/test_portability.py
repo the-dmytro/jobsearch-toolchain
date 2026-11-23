@@ -263,3 +263,48 @@ class CloudTemplateTests(unittest.TestCase):
             path = repo / "scripts" / "cloud" / name
             self.assertTrue(path.exists())
             self.assertTrue(os.access(path, os.X_OK))
+
+
+class TransportIsolationTests(unittest.TestCase):
+    """direct and supabase_https are alternatives: neither is ever used for the other."""
+
+    def test_https_failure_never_tries_direct(self) -> None:
+        from jobtracker.store import registry
+
+        env = {
+            "SUPABASE_URL": "https://127.0.0.1:9",
+            "SUPABASE_SECRET_KEY": "k",
+            "JOBTRACKER_DATABASE_URL": "postgresql://u:p@db.example.invalid/x",
+        }
+        with mock.patch.dict(os.environ, env), mock.patch.object(registry, "connect") as direct:
+            with self.assertRaises(MissingConfigurationError):
+                with registry.open_job_store(
+                    {"backend": "postgres", "transport": "supabase_https"}, root=Path(".")
+                ) as store:
+                    store.verify_run("x")
+        direct.assert_not_called()
+
+    def test_direct_failure_never_tries_https(self) -> None:
+        from jobtracker.store import https_sql, registry
+
+        env = {
+            "SUPABASE_URL": "https://ref.supabase.co",
+            "SUPABASE_SECRET_KEY": "k",
+            "JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1",
+        }
+        with mock.patch.dict(os.environ, env), mock.patch.object(https_sql, "connect_https") as https:
+            with self.assertRaises(MissingConfigurationError):
+                with registry.open_job_store({"backend": "postgres", "transport": "direct"}, root=Path(".")):
+                    pass
+        https.assert_not_called()
+
+    def test_https_does_not_need_or_read_the_database_url(self) -> None:
+        from jobtracker.store import https_sql
+
+        env = {
+            "SUPABASE_URL": "https://ref.supabase.co",
+            "SUPABASE_SECRET_KEY": "k",
+            "JOBTRACKER_DATABASE_URL": "",
+        }
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(https_sql.https_settings(), ("https://ref.supabase.co", "k"))

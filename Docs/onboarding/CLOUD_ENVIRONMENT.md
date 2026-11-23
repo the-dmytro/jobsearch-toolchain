@@ -36,25 +36,24 @@ Hosted agent sandboxes usually allow only HTTP(S) through a proxy. A raw Postgre
   HTTPS notifier (`telegram`, `slack`, `webhook`).
 - Every job-board host you fetch must be on the environment's allowed hosts list.
 
-`direct` remains the right choice on a machine that reaches PostgreSQL directly. Choose
-the transport per environment in config; the toolchain never switches transports.
+A project uses exactly one transport, the one in `config/jobsearch.toml`. The two are
+alternatives, not complements: `direct` never uses Supabase API keys, `supabase_https`
+never uses `JOBTRACKER_DATABASE_URL`, and neither is tried when the other fails. For
+work across cloud sandboxes and your own machines, choose `supabase_https` everywhere.
+Changing the transport is a deliberate config change, not something the toolchain does.
 
 ## One-time database preparation
 
 1. Create a Supabase project (free tier is enough for a personal search).
-2. Apply the migrations once, from a machine with a direct connection:
-
-   ```bash
-   # config: [store] backend = "postgres", transport = "direct"; .env: JOBTRACKER_DATABASE_URL
-   .venv/bin/python -m jobtracker migrate
-   ```
-
-   Without a direct connection, run the files in `db/migrations/` in order
-   (`001` … `008`) in the Supabase SQL editor. Migration `008` creates the HTTPS gateway
-   function, which only `service_role` may execute. Later migrations can then run over
-   HTTPS with `jobtracker migrate`.
+2. Create the schema through the transport you chose:
+   - **`supabase_https`:** the HTTPS gateway is itself created by migration `008`, so
+     paste `db/migrations/008_https_sql_gateway.sql` once into the Supabase SQL editor.
+     Then run `jobtracker migrate` (via `.venv/bin/python -m`); it applies the other migrations
+     over HTTPS. Only `service_role` may execute the gateway function.
+   - **`direct`:** run `jobtracker migrate` (via `.venv/bin/python -m`) with
+     `JOBTRACKER_DATABASE_URL` set.
 3. Supabase Free pauses a project after a week without activity and has no automatic
-   backups. Schedule `pg_dump` from a machine with direct access, or use a paid plan.
+   backups. Make backups with the Supabase dashboard or `pg_dump`, or use a paid plan.
 
 ## Repository layouts
 
@@ -68,8 +67,8 @@ the transport per environment in config; the toolchain never switches transports
   `jobtracker init --template cloud` and complete onboarding. The profile files are
   ignored, so they are lost when the session ends. Use this only to try the toolchain.
 
-`config/jobsearch.local.toml` (ignored) may override settings on one machine, for
-example `transport = "direct"` on a laptop.
+Keep the store choice (`backend`, `transport`) in the tracked config only, so every
+environment uses the same one. Do not override it in `config/jobsearch.local.toml`.
 
 ## Environment settings
 
@@ -139,7 +138,7 @@ When asked to set up a cloud environment for this toolchain:
    the setup script from `scripts/cloud/setup.sh`. Request the Supabase secret key
    through the platform's secure credential form (host `<project-ref>.supabase.co`,
    header `apikey`), then set `SUPABASE_SECRET_KEY=proxy-injected`.
-5. If the database is new, have migrations applied once (see
-   [preparation](#one-time-database-preparation)).
+5. If the database is new, have the schema created once through the chosen transport
+   (see [preparation](#one-time-database-preparation)).
 6. In a new session on that environment, run `scripts/cloud/verify.sh`. Report each
    check as passed, or blocked with the named host, variable or migration.
