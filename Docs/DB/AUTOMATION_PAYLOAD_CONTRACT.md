@@ -50,7 +50,7 @@ python3 -m jobtracker parse-upwork-alerts --source-payload upwork-mail-source.pa
 - `timestamp`: source timestamp.
 - `subject` or `title`.
 - `summary` or `snippet`.
-- `raw_text`: only when storing raw text in DB is appropriate. Prefer Storage for long raw content.
+- `raw_text`: full source text. The PostgreSQL store keeps it only as `opportunity_texts` for opportunities selected by `store.text_retention` (default `shortlisted`); otherwise it keeps a SHA-256 and an excerpt.
 
 ## Opportunity fields
 
@@ -67,7 +67,7 @@ python3 -m jobtracker parse-upwork-alerts --source-payload upwork-mail-source.pa
 - `application`: optional nested application object when an actual application was made.
 - `source_items`: optional source items specific to this opportunity. Entries may be full source-item objects or string references to top-level `source_items[].external_id`.
 - `dedupe_status`: `new`, `exact_external_id`, `exact_company_title`, `same_company_recent_application`, or `recently_notified`.
-- `dedupe_source`: configured `jobstore`, `local_fallback_index`, or both when applicable.
+- `dedupe_source`: configured `jobstore`, or `local_fallback_index` (payload history, used only with the SQLite store), or both.
 - `dedupe_reasons`: deterministic reason codes used for the decision.
 - `dedupe_matches`: compact evidence records for exact IDs, same-company applications, or recent notifications.
 - `email_policy`: `include_detail` or `suppress_detail`.

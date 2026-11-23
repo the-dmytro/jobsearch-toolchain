@@ -100,7 +100,7 @@ class ArgumentParsingTests(unittest.TestCase):
     def test_provider_is_derived_from_the_payload_run_key(self) -> None:
         payload = {"run": {"run_key": "upwork-2026-05-12-0958"}}
 
-        self.assertEqual(jobtracker_cli._payload_run_key(payload), "upwork-2026-05-12-0958")
+        self.assertEqual(jobtracker_cli.payload_run_key(payload), "upwork-2026-05-12-0958")
         self.assertEqual(jobtracker_cli._provider_from_payload(Path("a.json"), payload, None), "upwork")
         self.assertEqual(
             jobtracker_cli._provider_from_payload(Path("a.json"), payload, "LinkedIn"), "linkedin"

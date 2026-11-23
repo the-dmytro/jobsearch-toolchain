@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import urllib.error
 import urllib.request
@@ -11,7 +10,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from ...config import load_env_file
-from ..https_sql import RPC_PATH, connect_https
+from ..https_sql import connect_https, rpc_request
 from .base import ConnectorInfo, ProbeResult
 
 
@@ -49,12 +48,7 @@ class SupabaseHttpsConnector:
             result.needs.append("SUPABASE_URL (https://<project-ref>.supabase.co)")
             return result
         result.evidence.append(f"target {self.target(options)}")
-        request = urllib.request.Request(
-            url + RPC_PATH,
-            data=json.dumps({"query": "select 1 as ok", "mode": "rows"}).encode(),
-            method="POST",
-            headers={"Content-Type": "application/json", **({"apikey": key} if key else {})},
-        )
+        request = rpc_request(url, key, "select 1 as ok", "rows")
         try:
             with urllib.request.urlopen(request, timeout=timeout):
                 result.status = "available"

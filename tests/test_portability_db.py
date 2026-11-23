@@ -15,29 +15,10 @@ from unittest import mock
 from jobtracker.automation_state import PostgresAutomationStateStore
 from jobtracker.cli import main
 from jobtracker.db import connect_test
-from jobtracker.migrations import apply_migrations
 from jobtracker.retention import plan_prune
 from jobtracker.store.generic.postgres import PostgresJobStore
 from jobtracker.store.generic.postgres_documents import put_document, record_application
-
-
-def _test_db_reachable() -> bool:
-    if not os.getenv("SUPABASE_TEST_DB_URL"):
-        return False
-    try:
-        with connect_test() as conn, conn.cursor() as cur:
-            cur.execute("select 1")
-        return True
-    except Exception:
-        return False
-
-
-def _bootstrap_plain_postgres(conn) -> None:
-    bootstrap = Path(__file__).resolve().parent.parent / "db" / "ci" / "plain_postgres_bootstrap.sql"
-    with conn.cursor() as cur:
-        cur.execute(bootstrap.read_text(encoding="utf-8"))
-    conn.commit()
-
+from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 TABLES = (
     "documents, opportunity_texts, email_notifications, automation_run_events, application_events, "
@@ -76,13 +57,11 @@ def payload(run_key: str, *, evaluated: bool, application: bool = False) -> dict
     }
 
 
-@unittest.skipUnless(_test_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
+@unittest.skipUnless(test_db_reachable(), SKIP_REASON)
 class PortabilityDbTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        with connect_test() as conn:
-            _bootstrap_plain_postgres(conn)
-            apply_migrations(conn)
+        prepare_test_database()
 
     def setUp(self) -> None:
         with connect_test() as conn:
@@ -314,7 +293,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-@unittest.skipUnless(_test_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
+@unittest.skipUnless(test_db_reachable(), SKIP_REASON)
 class ProbeAgainstDatabaseTests(unittest.TestCase):
     def test_direct_connector_is_reported_available(self) -> None:
         from jobtracker.probe import probe_environment

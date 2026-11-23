@@ -24,11 +24,11 @@ Install the selected optional Python dependencies:
 .venv/bin/python -m jobtracker db-smoke
 ```
 
-Use the provider's TLS connection requirements. Keep connection strings and keys only in `.env`. The CLI is the supported database boundary; temporary environment-specific MCP exceptions do not belong in reusable playbooks.
+Use the provider's TLS connection requirements. Keep connection strings and keys only in `.env`. The CLI is the supported database boundary for toolchain data. Agent-side database tools (for example an MCP connector) are only for inspection and user-approved bootstrap steps, as described in [environment setup](../onboarding/ENVIRONMENT_SETUP.md).
 
 ## Replay local payloads
 
-JSON payload artifacts are the recovery boundary when switching stores:
+When moving from SQLite to PostgreSQL, the retained JSON payload artifacts carry the history over:
 
 ```bash
 .venv/bin/python -m jobtracker sync-pending-runs \

@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any
 
-from ..utils import json_default, normalize_space
+from ..utils import json_default, normalize_space, sha256_text
 
 HEAVY_TEXT_KEYS = frozenset(
     {
@@ -39,10 +39,6 @@ _NEGATION_PATTERN = re.compile(r"\b(not|no|don'?t|skip\w*|reject\w*|declin\w*|av
 def sha256_json(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=json_default).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def excerpt(value: str | None, limit: int = EXCERPT_CHARS) -> str | None:

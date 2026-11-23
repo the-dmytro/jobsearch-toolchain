@@ -25,6 +25,7 @@ from jobtracker.automation import (
     validate_config,
 )
 from jobtracker.config import Settings
+from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO_ROOT / "jobtracker" / "fixtures" / "provider_fetch"
@@ -52,7 +53,6 @@ def settings(**overrides) -> Settings:
         "secret_key": None,
         "service_role_key": None,
         "storage_bucket": "job-artifacts",
-        "store_backend": "postgres",
         "artifact_backend": "local",
         "mail_folder_aliases": {},
         "own_report_senders": frozenset(),
@@ -470,19 +470,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def _portability_db_reachable() -> bool:
-    if not os.getenv("SUPABASE_TEST_DB_URL"):
-        return False
-    try:
-        from jobtracker.db import connect_test
-
-        with connect_test() as conn, conn.cursor() as cur:
-            cur.execute("select 1")
-        return True
-    except Exception:
-        return False
-
-
 class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
     """A run either lands in the shared store and is verified, or says pending_sync."""
 
@@ -509,19 +496,9 @@ class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
         self.assertFalse((self.root / "outputs/jobsearch.sqlite3").exists())
         self.assertFalse((self.root / "outputs/automation-state").exists())
 
-    @unittest.skipUnless(
-        _portability_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database"
-    )
+    @unittest.skipUnless(test_db_reachable(), SKIP_REASON)
     def test_postgres_run_is_verified_and_prunes_intermediates(self) -> None:
-        from jobtracker.db import connect_test
-        from jobtracker.migrations import apply_migrations
-
-        bootstrap = REPO_ROOT / "db" / "ci" / "plain_postgres_bootstrap.sql"
-        with connect_test() as conn:
-            with conn.cursor() as cur:
-                cur.execute(bootstrap.read_text(encoding="utf-8"))
-            conn.commit()
-            apply_migrations(conn)
+        prepare_test_database()
         with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"]}):
             result = run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
         self.assertEqual(result["persistence"], "stored")

@@ -20,7 +20,6 @@ from unittest import mock
 
 from jobtracker.automation_state import PostgresAutomationStateStore
 from jobtracker.db import MissingConfigurationError, connect_test
-from jobtracker.migrations import apply_migrations
 from jobtracker.store.generic.postgres import PostgresJobStore
 from jobtracker.store.generic.postgres_documents import put_document, record_application
 from jobtracker.store.https_sql import (
@@ -32,6 +31,7 @@ from jobtracker.store.https_sql import (
     statement_mode,
 )
 from jobtracker.store.registry import open_job_store
+from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 
 class RenderingTests(unittest.TestCase):
@@ -85,17 +85,6 @@ class RenderingTests(unittest.TestCase):
                         pass
 
 
-def _db_reachable() -> bool:
-    if not os.getenv("SUPABASE_TEST_DB_URL"):
-        return False
-    try:
-        with connect_test() as conn, conn.cursor() as cur:
-            cur.execute("select 1")
-        return True
-    except Exception:
-        return False
-
-
 class _Gateway(BaseHTTPRequestHandler):
     api_key = "test-secret"
 
@@ -129,16 +118,11 @@ class _Gateway(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-@unittest.skipUnless(_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
+@unittest.skipUnless(test_db_reachable(), SKIP_REASON)
 class HttpsGatewayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        bootstrap = Path(__file__).resolve().parent.parent / "db" / "ci" / "plain_postgres_bootstrap.sql"
-        with connect_test() as conn:
-            with conn.cursor() as cur:
-                cur.execute(bootstrap.read_text(encoding="utf-8"))
-            conn.commit()
-            apply_migrations(conn)
+        prepare_test_database()
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _Gateway)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()

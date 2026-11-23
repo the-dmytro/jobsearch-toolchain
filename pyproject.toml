@@ -30,6 +30,8 @@ jobtracker = "jobtracker.cli:main"
 
 [project.entry-points."jobtracker.stores"]
 
+[project.entry-points."jobtracker.db_connectors"]
+
 [project.entry-points."jobtracker.notifiers"]
 
 [project.entry-points."jobtracker.calendars"]

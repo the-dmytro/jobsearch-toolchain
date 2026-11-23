@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .store.compact import sha256_json, sha256_text
-from .utils import normalize_space
+from .utils import normalize_space, payload_run_key
 
 PAYLOAD_GLOBS = ("*.payload.json", "*-manifest.json", "*.source.json")
 REPORT_SUFFIXES = (".md", ".txt")
@@ -64,10 +64,7 @@ def _run_keys(payload: dict[str, Any], kind: str) -> list[str]:
     if kind == "manifest":
         keys = [normalize_space(item.get("run_key")) for item in payload.get("provider_runs") or []]
         return [key for key in keys if key]
-    run = payload.get("run") or {}
-    key = normalize_space(run.get("run_key") if isinstance(run, dict) else None) or normalize_space(
-        payload.get("run_key")
-    )
+    key = payload_run_key(payload)
     return [key] if key else []
 
 

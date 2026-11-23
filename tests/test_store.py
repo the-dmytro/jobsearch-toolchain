@@ -218,7 +218,6 @@ def settings(**overrides) -> Settings:
         "secret_key": None,
         "service_role_key": None,
         "storage_bucket": "job-artifacts",
-        "store_backend": "postgres",
         "artifact_backend": "local",
         "mail_folder_aliases": {},
         "own_report_senders": frozenset(),

@@ -25,7 +25,7 @@ For one configured provider:
 .venv/bin/python -m jobtracker fetch-source <source-slug> --dry-run
 ```
 
-The non-dry run writes canonical payload artifacts and persists through the configured `JobStore`; SQLite and local artifacts are the defaults. When PostgreSQL is selected later, replay retained payloads with `sync-pending-runs --target-store postgres`.
+The non-dry run writes canonical payload artifacts and persists through the configured `JobStore` and reads the run back. When a project moves from SQLite to PostgreSQL, replay retained payloads with `sync-pending-runs --target-store postgres`.
 
 Use the model only for comparison, explanation, ranking, report prose, and explicitly requested drafting. Cite private profile evidence for judgments. Missing evidence becomes `Manual review needed`, not an invented claim.
 

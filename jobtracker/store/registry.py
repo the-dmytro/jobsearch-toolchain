@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from jobtracker.app_config.schema import POSTGRES_ALIASES
 from jobtracker.core.connectors import ConnectorSpec
 from jobtracker.core.models import ConnectorBuildContext
 from jobtracker.core.registry import Registry
@@ -29,9 +30,6 @@ store_registry.load_entry_points("jobtracker.stores", entry_point_loader=_load_s
 def _resolved_path(root: Path, value: str | Path) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else root / path
-
-
-POSTGRES_ALIASES = frozenset({"postgres", "postgresql", "supabase"})
 
 
 def canonical_backend(value: Any) -> str:

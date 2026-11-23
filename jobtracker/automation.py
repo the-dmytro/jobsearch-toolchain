@@ -116,13 +116,14 @@ def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
 
 def check_db_connectivity(store_options: dict[str, Any]) -> list[str]:
     """Check the one database connector named in config."""
+    from .store.connectors.base import iter_settings_missing
     from .store.registry import connect_postgres, postgres_connector
 
     try:
         connector = postgres_connector(store_options)
-        missing = [name for name in connector.info.settings if not (os.getenv(name) or "").strip()]
-        if connector.info.name == "postgres_direct" and not missing and not load_settings().db_url:
-            missing = ["JOBTRACKER_DATABASE_URL"]
+        missing = list(iter_settings_missing(connector.info.settings, dict(os.environ)))
+        if connector.info.name == "postgres_direct" and load_settings().db_url:
+            missing = []  # the legacy SUPABASE_DB_URL name is still accepted
         if missing:
             return [f"database: {connector.info.name} needs {', '.join(missing)}"]
         with connect_postgres(store_options) as conn:
