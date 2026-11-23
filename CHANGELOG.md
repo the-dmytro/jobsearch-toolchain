@@ -9,10 +9,17 @@ All notable changes use semantic versions. The project is distributed from signe
 - Migration `007_portability_documents.sql`: `documents`, `opportunity_texts`, compact opportunity-card columns.
 - `documents put/list/get`, `record-application`, `prune-local`, and `compact-db` commands.
 - PostgreSQL automation state (`--state-backend`), so processed messages and sent reports are shared across environments.
-- `store.required_backend` / `JOBTRACKER_REQUIRED_STORE`, store receipts with readback, and an explicit `--journal-on-db-failure` mode (exit code 3).
+- Store receipts with readback on `run` and `upsert-run`.
+- `store.transport = "supabase_https"` (migration `008`): the same PostgreSQL database over the Supabase Data API, for HTTP-only sandboxes.
+- Cloud environment guide, `config/jobsearch.cloud.example.toml`, `init --template cloud`, `scripts/cloud/setup.sh` and `scripts/cloud/verify.sh`.
 
 ### Changed
 
+- **Breaking:** `[store].backend` is required (no implicit SQLite default); PostgreSQL also requires `transport`. All commands, including migrations, imports, `db-smoke`, `dedupe-candidates --include-db` and the `fetch-*` aliases, use only the configured store. There are no fallbacks to another store.
+- Mail state (`fetch-mail-folder`, `send-report-email`) lives in the configured store and requires the config file.
+- A missing `profile/provider_targets.toml` is an error instead of silently using bundled fixture targets.
+- With PostgreSQL, duplicates are decided by the database only; local payload history is used only with SQLite.
+- PostgreSQL report artifacts follow `store.artifact_backend`; a failed upload is an error.
 - PostgreSQL rows no longer copy the full payload into `metadata`; full job texts follow `store.text_retention`.
 - Replaying a payload with an application updates the existing application instead of inserting a duplicate.
 - `sync-pending-runs` replays one file per `run_key` and does not overwrite a stored run that has more evaluations.

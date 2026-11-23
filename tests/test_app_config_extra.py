@@ -161,7 +161,7 @@ class LoadAppConfigTests(unittest.TestCase):
 
 class ValidateJobsearchConfigTests(unittest.TestCase):
     def test_paths_fall_back_to_defaults(self) -> None:
-        validated = validate_jobsearch_config({})
+        validated = validate_jobsearch_config({"store": {"backend": "sqlite"}})
 
         self.assertEqual(validated["paths"]["config_dir"], "config")
         self.assertEqual(validated["paths"]["profile_dir"], "profile")
@@ -180,6 +180,24 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
                 {"pipelines": {"jobboards": {"type": "jobboard", "profile": "generic"}}}
             )
 
+    def test_store_backend_must_be_chosen_explicitly(self) -> None:
+        with self.assertRaises(ConfigValidationError) as caught:
+            validate_jobsearch_config({})
+        self.assertIn("no fallback", str(caught.exception))
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "postgres"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "postgres", "transport": "carrier-pigeon"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "sqlite", "transport": "direct"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "sqlite", "required_backend": "sqlite"}})
+        validated = validate_jobsearch_config(
+            {"store": {"backend": "supabase", "transport": "supabase_https"}}
+        )
+        self.assertEqual(validated["store"]["backend"], "postgres")
+        self.assertEqual(validated["store"]["transport"], "supabase_https")
+
     def test_unknown_schema_version_is_rejected(self) -> None:
         with self.assertRaises(ConfigValidationError):
             validate_jobsearch_config({"schema_version": 2})
@@ -196,6 +214,7 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
                     }
                 },
                 "notify": {"Email": {"to": "me@example.com"}},
+                "store": {"backend": "sqlite"},
             }
         )
 

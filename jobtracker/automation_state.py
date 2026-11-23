@@ -591,32 +591,22 @@ def compact_state(value: dict[str, Any], limit: int = 500) -> dict[str, Any]:
     return result
 
 
-STATE_BACKENDS = ("auto", "sqlite", "postgres")
-
-
 @contextmanager
-def open_automation_state(
-    backend: str,
-    *,
-    sqlite_path: str | Path,
-    store_options: dict[str, Any] | None = None,
-) -> Iterator[Any]:
-    """Open automation state explicitly; never silently swaps Postgres for SQLite.
+def open_automation_state(store_options: dict[str, Any], *, sqlite_path: str | Path) -> Iterator[Any]:
+    """Automation state lives in the configured store; there is no second location.
 
-    ``auto`` follows the configured store backend (postgres -> Postgres state).
+    ``store.backend = "postgres"`` keeps it in PostgreSQL (shared by every environment);
+    ``"sqlite"`` keeps it in the local SQLite state file.
     """
-    from .db import connect
-    from .store.registry import canonical_backend, enforce_required_backend
+    from .db import MissingConfigurationError
+    from .store.registry import canonical_backend, connect_postgres
 
-    choice = (backend or "auto").strip().lower()
-    if choice not in STATE_BACKENDS:
-        raise ValueError(f"state backend must be one of: {', '.join(STATE_BACKENDS)}")
-    options = dict(store_options or {})
-    if choice == "auto":
-        choice = "postgres" if canonical_backend(options.get("backend")) == "postgres" else "sqlite"
-    enforce_required_backend({**options, "backend": choice})
-    if choice == "postgres":
-        with connect() as conn:
+    backend = canonical_backend(store_options.get("backend"))
+    if backend == "postgres":
+        with connect_postgres(store_options) as conn:
             yield PostgresAutomationStateStore(conn)
         return
-    yield AutomationStateStore(sqlite_path)
+    if backend == "sqlite":
+        yield AutomationStateStore(sqlite_path)
+        return
+    raise MissingConfigurationError(f"Automation state is not supported for store backend {backend!r}")

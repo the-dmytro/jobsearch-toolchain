@@ -6,7 +6,7 @@ from typing import Any
 
 from ...utils import json_default, normalize_name, normalize_space, parse_timestamp, slugify, utc_now
 from ...validation import validate_payload
-from ..artifacts.supabase_storage import SupabaseArtifactStore
+from ..artifacts.local import artifact_store_factory
 from ..base import DuplicateMatch, UpsertResult
 from ..compact import (
     compact_facts,
@@ -173,12 +173,23 @@ def _organization(conn: Any, company: str | None, metadata: dict[str, Any] | Non
         return cur.fetchone()["id"]
 
 
-def _artifact(conn: Any, report_path: str | None, provider_slug: str, run_key: str) -> str | None:
+def _artifact(
+    conn: Any, report_path: str | None, provider_slug: str, run_key: str, artifact_backend: str = "local"
+) -> str | None:
+    """Register the report with the configured artifact backend; a failed upload is an error."""
     if not report_path:
         return None
     path = Path(report_path)
     storage_path = f"{provider_slug}/{run_key}/{path.name}"
-    upload = SupabaseArtifactStore().upload(path, storage_path=storage_path).as_dict()
+    ref = artifact_store_factory(artifact_backend).upload(path, storage_path=storage_path)
+    if artifact_backend != "local" and not ref.uploaded:
+        from ...db import MissingConfigurationError
+
+        raise MissingConfigurationError(
+            f"store.artifact_backend = {artifact_backend!r} but the upload did not happen: "
+            f"{ref.upload_warning or 'unknown reason'}"
+        )
+    upload = ref.as_dict()
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -706,6 +717,7 @@ def _upsert_run_payload(
     report_path: str | None = None,
     *,
     text_retention: str = "shortlisted",
+    artifact_backend: str = "local",
 ) -> UpsertResult:
     text_retention = normalize_text_retention(text_retention)
     payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
@@ -723,7 +735,9 @@ def _upsert_run_payload(
         run_key = f"{provider_slug}-{slugify(timestamp)}"
 
     with conn.transaction():
-        report_artifact_id = _artifact(conn, report_path, provider_slug, run_key) if report_path else None
+        report_artifact_id = (
+            _artifact(conn, report_path, provider_slug, run_key, artifact_backend) if report_path else None
+        )
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1078,6 +1092,7 @@ class PostgresJobStore:
             payload_path,
             report_path=report_path,
             text_retention=self.text_retention,
+            artifact_backend=str(self.options.get("artifact_backend") or "local"),
         )
 
     def verify_run(self, run_key: str) -> dict[str, Any] | None:

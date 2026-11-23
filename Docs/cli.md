@@ -17,7 +17,7 @@ not already at the project root.
 | `export-summary` | Export one application summary through the configured `JobStore` |
 
 ```bash
-python -m jobtracker init
+python -m jobtracker init                    # or: init --template cloud
 python -m jobtracker doctor --skip-network
 python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 python -m jobtracker run jobboards --fixture-dir jobtracker/fixtures/provider_fetch
@@ -96,8 +96,8 @@ environments. They never write to a local fallback. See
 | `prune-local` | Delete local artifacts whose content is verified in the database |
 | `compact-db` | Remove legacy full-payload copies; apply job-text retention |
 
-`run` and `upsert-run` accept `--journal-on-db-failure` to keep an explicit local
-journal (exit code 3) when PostgreSQL is unreachable.
+If the configured store is unreachable, these commands and `run`/`upsert-run` fail;
+nothing is written elsewhere.
 
 ## Optional PostgreSQL and imports
 

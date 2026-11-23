@@ -16,7 +16,7 @@ Install the selected optional Python dependencies:
 2. Copy `.env.example` to ignored `.env`.
 3. Set `JOBTRACKER_DATABASE_URL` to the hosted PostgreSQL connection string.
 4. If Supabase Storage is selected, set the documented Supabase URL, server secret, and bucket variables.
-5. Change `[store].backend` to `postgres` in ignored `config/jobsearch.toml`.
+5. Set `[store].backend = "postgres"` and `transport = "direct"` (or `"supabase_https"`, see [cloud environments](../onboarding/CLOUD_ENVIRONMENT.md)) in `config/jobsearch.toml`.
 6. Apply migrations and check the connection:
 
 ```bash

@@ -21,13 +21,13 @@ from jobtracker.portability import choose_replay_files, require_shared_store
 from jobtracker.retention import apply_prune, classify, plan_prune
 from jobtracker.store.compact import compact_facts, keep_full_text, normalize_text_retention, sha256_json
 from jobtracker.store.generic.memory import MemoryJobStore
-from jobtracker.store.registry import describe_store, enforce_required_backend
+from jobtracker.store.registry import describe_store
 
 POSTGRES_CONFIG = """schema_version = 1
 
 [store]
 backend = "postgres"
-required_backend = "postgres"
+transport = "direct"
 """
 
 
@@ -71,37 +71,32 @@ class CompactRulesTests(unittest.TestCase):
 
 
 class ExplicitStoreTests(unittest.TestCase):
-    def test_required_backend_refuses_local_store(self) -> None:
-        with self.assertRaises(MissingConfigurationError) as caught:
-            enforce_required_backend({"backend": "sqlite", "required_backend": "postgres"})
-        self.assertIn("silent local fallback", str(caught.exception))
-        with mock.patch.dict(os.environ, {"JOBTRACKER_REQUIRED_STORE": "supabase"}):
-            with self.assertRaises(MissingConfigurationError):
-                enforce_required_backend({"backend": "sqlite"})
-            enforce_required_backend({"backend": "postgresql"})
-
-    def test_state_opener_refuses_sqlite_when_postgres_required(self) -> None:
+    def test_state_follows_the_configured_store(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            with self.assertRaises(MissingConfigurationError):
-                with open_automation_state(
-                    "sqlite",
-                    sqlite_path=Path(temp_dir) / "state.sqlite",
-                    store_options={"backend": "postgres", "required_backend": "postgres"},
-                ):
-                    pass
-            with open_automation_state(
-                "auto", sqlite_path=Path(temp_dir) / "s.sqlite", store_options={}
-            ) as state:
+            sqlite_path = Path(temp_dir) / "state.sqlite"
+            with open_automation_state({"backend": "sqlite"}, sqlite_path=sqlite_path) as state:
                 self.assertEqual(state.backend, "sqlite")
+            with self.assertRaises(MissingConfigurationError):
+                with open_automation_state({}, sqlite_path=sqlite_path):
+                    pass
+            with self.assertRaises(MissingConfigurationError):
+                with open_automation_state({"backend": "memory"}, sqlite_path=sqlite_path):
+                    pass
 
     def test_describe_store_never_leaks_credentials(self) -> None:
         url = "postgresql://user:secret-password@db.example.invalid:5432/postgres"
         with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": url}):
-            receipt = describe_store({"backend": "supabase"}, root=Path("."))
-        self.assertEqual(receipt, {"backend": "postgres", "target": "db.example.invalid", "shared": True})
+            receipt = describe_store({"backend": "supabase", "transport": "direct"}, root=Path("."))
+        self.assertEqual(
+            receipt,
+            {"backend": "postgres", "transport": "direct", "target": "db.example.invalid", "shared": True},
+        )
         self.assertNotIn("secret", json.dumps(receipt))
+        with mock.patch.dict(os.environ, {"SUPABASE_URL": "https://ref.supabase.co"}):
+            receipt = describe_store({"backend": "postgres", "transport": "supabase_https"}, root=Path("."))
+        self.assertEqual(receipt["target"], "ref.supabase.co")
 
-    def test_upsert_run_journals_explicitly_when_database_unreachable(self) -> None:
+    def test_unreachable_database_is_an_error_and_nothing_is_written_locally(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "config").mkdir()
@@ -114,28 +109,12 @@ class ExplicitStoreTests(unittest.TestCase):
                     code = main(
                         ["upsert-run", "--provider", "acme", "--payload", str(payload), "--root", str(root)]
                     )
-                self.assertEqual(code, 2)
-                stdout = io.StringIO()
-                with redirect_stdout(stdout):
-                    code = main(
-                        [
-                            "upsert-run",
-                            "--provider",
-                            "acme",
-                            "--payload",
-                            str(payload),
-                            "--root",
-                            str(root),
-                            "--journal-on-db-failure",
-                        ]
-                    )
-                self.assertEqual(code, 3)
-                result = json.loads(stdout.getvalue())
-                self.assertEqual(result["persistence"], "pending_sync")
-                self.assertFalse(result["persisted"])
-                doctor = run_doctor(root=root, skip_network=True)
-            self.assertEqual(doctor["status"], "action_required")
-            self.assertEqual(doctor["checks"]["pending_sync"][0]["run_key"], "acme-2026-11-23")
+            self.assertEqual(code, 2)
+            self.assertIn("error:", stderr.getvalue())
+            self.assertEqual(sorted(p.name for p in (root / "outputs").iterdir()), ["p.payload.json"])
+            doctor = run_doctor(root=root, skip_network=True)
+            self.assertEqual(doctor["checks"]["store"]["backend"], "postgres")
+            self.assertEqual(doctor["checks"]["pending_sync"], [])
 
     def test_sqlite_store_is_reported_as_local(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -156,20 +135,27 @@ class ExplicitStoreTests(unittest.TestCase):
             self.assertFalse(result["store"]["shared"])
             self.assertTrue(result["verified"])
 
+    def test_missing_provider_targets_is_an_error_outside_fixture_mode(self) -> None:
+        from jobtracker.sources.registry import _load_targets
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                _load_targets(root=Path(temp_dir))
+            self.assertIn("providers", _load_targets(root=Path(temp_dir), fixture_mode=True))
+
 
 class ReplaySelectionTests(unittest.TestCase):
-    def test_prefers_journal_then_most_final_variant(self) -> None:
+    def test_prefers_the_most_final_variant(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             normalized = write_payload(root / "a.normalized.payload.json", "run-1")
             evaluated = write_payload(root / "a.evaluated.payload.json", "run-1", evaluated=True)
             deduped = write_payload(root / "a.deduped.payload.json", "run-1")
             other = write_payload(root / "b.deduped.payload.json", "run-2")
-            chosen = choose_replay_files([normalized, evaluated, deduped, other], {})
+            chosen = choose_replay_files([normalized, evaluated, deduped, other])
             self.assertEqual(chosen["run-1"], evaluated)
             self.assertEqual(chosen["run-2"], other)
-            chosen = choose_replay_files([normalized, evaluated], {"run-1": str(deduped)})
-            self.assertEqual(chosen["run-1"], deduped)
+            self.assertEqual(choose_replay_files([normalized, deduped])["run-1"], deduped)
 
 
 class _VerifyingStore(MemoryJobStore):
@@ -237,8 +223,8 @@ class PruneTests(unittest.TestCase):
             require_shared_store(config)
 
 
-class StateJournalTests(unittest.TestCase):
-    def test_pending_runs_lists_unsynced_journal_entries(self) -> None:
+class ReplayStateTests(unittest.TestCase):
+    def test_pending_runs_lists_failed_replays(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state = AutomationStateStore(Path(temp_dir) / "state.sqlite")
             state.mark_run_sync_attempt("acme", "run-1", "/tmp/a.json", error="down")
@@ -249,3 +235,31 @@ class StateJournalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloudTemplateTests(unittest.TestCase):
+    def test_cloud_template_is_a_valid_shared_store_config(self) -> None:
+        from jobtracker.app_config.loader import load_app_config
+        from jobtracker.automation import scaffold_config
+
+        repo = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "config").mkdir()
+            for name in ("jobsearch.example.toml", "jobsearch.cloud.example.toml"):
+                (root / "config" / name).write_text(
+                    (repo / "config" / name).read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            scaffold_config(root=root, template="cloud")
+            config = load_app_config(root=root)
+            self.assertEqual(config.store["backend"], "postgres")
+            self.assertEqual(config.store["transport"], "supabase_https")
+            with self.assertRaises(ValueError):
+                scaffold_config(root=root, template="nope", force=True)
+
+    def test_cloud_scripts_exist_and_are_executable(self) -> None:
+        repo = Path(__file__).resolve().parent.parent
+        for name in ("setup.sh", "verify.sh"):
+            path = repo / "scripts" / "cloud" / name
+            self.assertTrue(path.exists())
+            self.assertTrue(os.access(path, os.X_OK))

@@ -14,7 +14,7 @@ from .automation import run_doctor, run_pipeline, scaffold_config
 from .automation_state import AutomationStateStore, open_automation_state
 from .cli_portability import register as register_portability
 from .config import load_env_file
-from .db import MissingConfigurationError, MissingDependencyError, connect, connect_test
+from .db import MissingConfigurationError, MissingDependencyError, connect_test
 from .dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
 from .gmail_imap import MAIL_FOLDER_ALIASES, MailImapClient, filter_provider_messages, resolve_mail_folder
 from .greenhouse_import import import_greenhouse_tracking, summarize_greenhouse_tracking
@@ -25,17 +25,11 @@ from .mail.base import OutgoingMessage
 from .mail.generic.smtp import SmtpMailSender
 from .mail.registry import build_alert_parser, build_mail_inbox, build_mail_sender
 from .migrations import apply_migrations
-from .payloads import check_duplicates
-from .portability import (
-    PENDING_SYNC_EXIT_CODE,
-    choose_replay_files,
-    journal_pending,
-    state_db_path,
-)
+from .portability import choose_replay_files
 from .provider_fetch import benchmark_providers, collect_provider_run
 from .sources.registry import source_registry
 from .store.compact import sha256_json
-from .store.registry import describe_store, enforce_required_backend, open_job_store
+from .store.registry import canonical_backend, connect_postgres, describe_store, open_job_store
 from .upwork_email import parse_upwork_alert_payload
 from .utils import json_default, normalize_space, sha256_text, slugify
 from .validation import validate_payload
@@ -46,7 +40,9 @@ def _print_json(value) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    result = scaffold_config(root=Path(args.root), force=args.force)
+    result = scaffold_config(
+        root=Path(args.root), force=args.force, template=getattr(args, "template", "local")
+    )
     _print_json(result)
     return 0
 
@@ -71,16 +67,27 @@ def cmd_run(args: argparse.Namespace) -> int:
             fixture_dir=getattr(args, "fixture_dir", None),
             now=now,
             dry_run=args.dry_run,
-            journal_on_db_failure=getattr(args, "journal_on_db_failure", False),
         )
     except (ValueError, RuntimeError) as exc:
         raise ValueError(str(exc)) from exc
     _print_json(result)
-    return PENDING_SYNC_EXIT_CODE if result.get("persistence") == "pending_sync" else 0
+    return 0
+
+
+def _store_config(args: argparse.Namespace):
+    return load_app_config(getattr(args, "config", None), root=Path(getattr(args, "root", None) or "."))
+
+
+@contextmanager
+def _configured_postgres(args: argparse.Namespace):
+    """The PostgreSQL connection named by config; refuses when the store is not PostgreSQL."""
+    config = _store_config(args)
+    with connect_postgres(config.store) as conn:
+        yield conn
 
 
 def cmd_migrate(args: argparse.Namespace) -> int:
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         applied = apply_migrations(conn, dry_run=args.dry_run)
     _print_json({"dry_run": args.dry_run, "migrations": applied})
     return 0
@@ -90,7 +97,7 @@ def cmd_import_legacy(args: argparse.Namespace) -> int:
     if args.dry_run:
         _print_json(summarize_legacy_csv(args.csv, links_pdf=args.links_pdf))
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_legacy_csv(conn, args.csv, links_pdf=args.links_pdf)
     _print_json(result)
     return 0
@@ -121,7 +128,7 @@ def cmd_import_linkedin_tracking(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_linkedin_tracking(
             conn,
             jobs_csv=args.jobs_csv,
@@ -138,7 +145,7 @@ def cmd_import_greenhouse(args: argparse.Namespace) -> int:
     if args.dry_run:
         _print_json(summarize_greenhouse_tracking(args.csv, as_of=as_of))
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_greenhouse_tracking(conn, csv_path=args.csv, as_of=as_of)
     _print_json(result)
     return 0
@@ -149,32 +156,10 @@ def cmd_upsert_run(args: argparse.Namespace) -> int:
     payload_path = config.resolve_path(args.payload)
     report_path = str(config.resolve_path(args.report)) if args.report else None
     receipt = describe_store(config.store, root=config.root)
-    enforce_required_backend(config.store)
-    try:
-        with open_job_store(config.store, root=config.root) as store:
-            result = store.upsert_run_payload(args.provider, str(payload_path), report_path=report_path)
-            verify = getattr(store, "verify_run", None)
-            readback = verify(result.run_key) if verify else None
-    except MissingConfigurationError as exc:
-        if not getattr(args, "journal_on_db_failure", False) or receipt["backend"] != "postgres":
-            raise
-        entry = journal_pending(
-            state_db_path(config.root, getattr(args, "state_db", None)),
-            slugify(args.provider),
-            payload_path,
-            str(exc),
-        )
-        _print_json(
-            {
-                "persistence": "pending_sync",
-                "persisted": False,
-                "store": receipt,
-                "journal": entry,
-                "error": str(exc),
-                "next_step": "jobtracker sync-pending-runs once the database is reachable",
-            }
-        )
-        return PENDING_SYNC_EXIT_CODE
+    with open_job_store(config.store, root=config.root) as store:
+        result = store.upsert_run_payload(args.provider, str(payload_path), report_path=report_path)
+        verify = getattr(store, "verify_run", None)
+        readback = verify(result.run_key) if verify else None
     if verify and not readback:
         raise RuntimeError(f"Readback failed: run {result.run_key} is not in the {receipt['backend']} store")
     _print_json({**vars(result), "persistence": "stored", "store": receipt, "verified": bool(readback)})
@@ -203,8 +188,16 @@ def cmd_export_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_db_smoke(args: argparse.Namespace) -> int:
-    connector = connect_test if args.test else connect
-    with connector() as conn:
+    if args.test:
+        connection = connect_test()
+        target = {"target": "SUPABASE_TEST_DB_URL"}
+    else:
+        config = _store_config(args)
+        if args.write_test and config.store.get("transport") == "supabase_https":
+            raise ValueError("--write-test needs a rollback, which the supabase_https transport cannot do")
+        connection = connect_postgres(config.store)
+        target = describe_store(config.store, root=config.root)
+    with connection as conn:
         with conn.cursor() as cur:
             cur.execute("select current_database() as database, current_user as user")
             result = cur.fetchone()
@@ -231,7 +224,7 @@ def cmd_db_smoke(args: argparse.Namespace) -> int:
                 conn.rollback()
     _print_json(
         {
-            "target": "SUPABASE_TEST_DB_URL" if args.test else "SUPABASE_DB_URL",
+            "target": target,
             "connection": result,
             "write_test": write_result,
         }
@@ -270,14 +263,18 @@ def cmd_dedupe_candidates(args: argparse.Namespace) -> int:
     enriched = dedupe_payload(payload, provider=args.provider, index=index)
     if args.include_db:
         matches_by_external_id: dict[str, list[dict]] = {}
-        with connect() as conn:
+        config = _store_config(args)
+        with open_job_store(config.store, root=config.root) as store:
             for item in enriched.get("opportunities") or []:
                 if not isinstance(item, dict):
                     continue
                 external_id = normalize_space(item.get("external_id"))
-                matches = check_duplicates(
-                    conn, args.provider, item.get("company"), item.get("title"), external_id=external_id
-                )
+                matches = [
+                    match.as_dict()
+                    for match in store.check_duplicates(
+                        args.provider, item.get("company"), item.get("title"), external_id=external_id
+                    )
+                ]
                 if external_id and matches:
                     matches_by_external_id[external_id] = matches
         enriched = apply_db_dedupe_matches(
@@ -331,12 +328,12 @@ def cmd_fetch_mail_folder(args: argparse.Namespace) -> int:
     state_db = Path(args.state_db)
     if not state_db.is_absolute():
         state_db = root / state_db
-    with open_automation_state(
-        getattr(args, "state_backend", "auto"),
-        sqlite_path=state_db,
-        store_options=config.store if config else {},
-    ) as store:
-        state_result = {**store.upsert_source_items(provider, source_items), "state_backend": store.backend}
+    if config is None:
+        raise MissingConfigurationError(
+            "fetch-mail-folder records processing state in the configured store; config/jobsearch.toml is required."
+        )
+    with open_automation_state(config.store, sqlite_path=state_db) as store:
+        state_result = {**store.upsert_source_items(provider, source_items), "state_store": store.backend}
     skipped = (
         0 if args.no_provider_filter else (skipped_by_filter if parser_config else filter_result.skipped)
     )
@@ -404,11 +401,11 @@ def cmd_send_report_email(args: argparse.Namespace) -> int:
     state_db = Path(args.state_db)
     if not state_db.is_absolute():
         state_db = root / state_db
-    with open_automation_state(
-        getattr(args, "state_backend", "auto"),
-        sqlite_path=state_db,
-        store_options=config.store if config else {},
-    ) as store:
+    if config is None:
+        raise MissingConfigurationError(
+            "send-report-email records sent reports in the configured store; config/jobsearch.toml is required."
+        )
+    with open_automation_state(config.store, sqlite_path=state_db) as store:
         return _send_report_email_with_state(
             args, config, store, key, provider, run_key, to_address, from_address, body
         )
@@ -426,7 +423,7 @@ def _send_report_email_with_state(
                 "skipped": True,
                 "reason": "email idempotency key already reserved or sent",
                 "idempotency_key": key,
-                "state_backend": store.backend,
+                "state_store": store.backend,
             }
         )
         return 0
@@ -454,7 +451,7 @@ def _send_report_email_with_state(
             "idempotency_key": key,
             "to": to_address,
             "subject": args.subject,
-            "state_backend": store.backend,
+            "state_store": store.backend,
         }
     )
     return 0
@@ -509,13 +506,18 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     if not state_db.is_absolute():
         state_db = root / state_db
     target_store = getattr(args, "target_store", "postgres")
+    config = None if args.dry_run else _store_config(args)
+    if config is not None and canonical_backend(config.store.get("backend")) != target_store:
+        raise MissingConfigurationError(
+            f"sync-pending-runs writes to the configured store; set [store].backend = {target_store!r} "
+            "(with its transport) before replaying."
+        )
     payload_paths = sorted(payload_dir.rglob("*.payload.json"))
     synced = 0
     skipped = 0
     failed: list[dict[str, str]] = []
     conflicts: list[dict[str, Any]] = []
-    journal_rows = AutomationStateStore(state_db).pending_runs() if state_db.exists() else []
-    if not payload_paths and not journal_rows:
+    if not payload_paths:
         _print_json(
             {
                 "payload_dir": str(payload_dir),
@@ -528,11 +530,8 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
         )
         return 0
     state = AutomationStateStore(state_db)
-    target_context = (
-        nullcontext(None) if args.dry_run else open_job_store({"backend": target_store}, root=root)
-    )
-    journal = {row["run_key"]: row["payload_path"] for row in journal_rows if row.get("payload_path")}
-    selected = choose_replay_files(payload_paths, journal)
+    target_context = nullcontext(None) if args.dry_run else open_job_store(config.store, root=config.root)
+    selected = choose_replay_files(payload_paths)
     for payload_path in payload_paths:
         try:
             if not _payload_run_key(json.loads(payload_path.read_text(encoding="utf-8"))):
@@ -619,10 +618,12 @@ def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
                 max_boards=getattr(args, "max_boards", None),
             )
         else:
-            with connect() as conn:
+            config = _store_config(args)
+            with open_job_store(config.store, root=config.root) as store:
                 result = collect_provider_run(
                     provider_slug,
-                    conn=conn,
+                    conn=getattr(store, "conn", None),
+                    store=store,
                     dry_run=False,
                     payload_out=args.payload_out,
                     fixture_dir=getattr(args, "fixture_dir", None),
@@ -752,6 +753,8 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument(
         "--dry-run", action="store_true", help="List pending migrations without applying them"
     )
+    migrate.add_argument("--root", default=".", help="Project root for relative paths")
+    migrate.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     migrate.set_defaults(func=cmd_migrate)
 
     legacy = subparsers.add_parser(
@@ -765,6 +768,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional PDF export containing the clickable vacancy links. Defaults to a same-name .pdf next to the CSV.",
     )
     legacy.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing to DB")
+    legacy.add_argument("--root", default=".", help="Project root for relative paths")
+    legacy.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     legacy.set_defaults(func=cmd_import_legacy)
 
     linkedin = subparsers.add_parser(
@@ -786,6 +791,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--as-of", help="Anchor date for LinkedIn relative dates like '2mo ago', in YYYY-MM-DD format"
     )
     linkedin.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing to DB")
+    linkedin.add_argument("--root", default=".", help="Project root for relative paths")
+    linkedin.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     linkedin.set_defaults(func=cmd_import_linkedin_tracking)
 
     greenhouse = subparsers.add_parser("import-greenhouse", help="Import Greenhouse application tracker CSV")
@@ -798,6 +805,8 @@ def build_parser() -> argparse.ArgumentParser:
     greenhouse.add_argument(
         "--dry-run", action="store_true", help="Parse and summarize without writing to DB"
     )
+    greenhouse.add_argument("--root", default=".", help="Project root for relative paths")
+    greenhouse.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     greenhouse.set_defaults(func=cmd_import_greenhouse)
 
     upsert = subparsers.add_parser("upsert-run", help="Upsert one automation run payload")
@@ -806,12 +815,6 @@ def build_parser() -> argparse.ArgumentParser:
     upsert.add_argument("--report", help="Optional Markdown report path to upload/register")
     upsert.add_argument("--root", default=".", help="Project root directory")
     upsert.add_argument("--config", help="Path to jobsearch.toml")
-    upsert.add_argument(
-        "--journal-on-db-failure",
-        action="store_true",
-        help="If PostgreSQL is unreachable, record an explicit pending-sync journal entry and exit 3",
-    )
-    upsert.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
     upsert.set_defaults(func=cmd_upsert_run)
 
     dupes = subparsers.add_parser(
@@ -837,6 +840,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--test", action="store_true", help="Use SUPABASE_TEST_DB_URL instead of SUPABASE_DB_URL"
     )
     db_smoke.add_argument("--write-test", action="store_true", help="Also run a rollback-only write test")
+    db_smoke.add_argument("--root", default=".", help="Project root for relative paths")
+    db_smoke.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     db_smoke.set_defaults(func=cmd_db_smoke)
 
     validate = subparsers.add_parser("validate-payload", help="Validate and normalize an automation payload")
@@ -873,6 +878,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also check Supabase for existing opportunities and applications",
     )
     dedupe.add_argument("--now", help=argparse.SUPPRESS)
+    dedupe.add_argument("--root", default=".", help="Project root for relative paths")
+    dedupe.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     dedupe.set_defaults(func=cmd_dedupe_candidates)
 
     folders = subparsers.add_parser(
@@ -910,12 +917,6 @@ def build_parser() -> argparse.ArgumentParser:
             help="Do not filter mixed-folder messages by provider sender/content",
         )
         parser.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
-        parser.add_argument(
-            "--state-backend",
-            choices=["auto", "sqlite", "postgres"],
-            default="auto",
-            help="auto follows [store].backend; postgres shares state across environments",
-        )
         parser.add_argument("--run-key")
         parser.add_argument("--output", help="Optional path to write fetched source payload JSON")
         parser.set_defaults(func=cmd_fetch_mail_folder)
@@ -950,7 +951,6 @@ def build_parser() -> argparse.ArgumentParser:
     send_email.add_argument("--body-file", required=True)
     send_email.add_argument("--idempotency-key")
     send_email.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
-    send_email.add_argument("--state-backend", choices=["auto", "sqlite", "postgres"], default="auto")
     send_email.add_argument("--root", default=".", help="Project root for config and relative paths")
     send_email.add_argument("--config", help="Path to jobsearch.toml")
     send_email.set_defaults(func=cmd_send_report_email)
@@ -974,6 +974,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replay even when the database run has more evaluations than the local file",
     )
     sync.add_argument("--root", default=".", help="Project root for relative paths")
+    sync.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     sync.set_defaults(func=cmd_sync_pending_runs)
 
     def add_fetch_common(parser: argparse.ArgumentParser) -> None:
@@ -989,15 +990,15 @@ def build_parser() -> argparse.ArgumentParser:
         )
         parser.add_argument(
             "--targets",
-            help="Optional provider target TOML path. Defaults to profile/provider_targets.toml or jobtracker/fixtures/provider_targets.toml",
+            help="Optional provider target TOML path. Defaults to profile/provider_targets.toml under --root",
         )
         parser.add_argument("--fixture-dir", help=argparse.SUPPRESS)
         parser.add_argument("--now", help=argparse.SUPPRESS)
+        parser.add_argument("--root", default=".", help="Project root for relative paths")
+        parser.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
 
     fetch_source = subparsers.add_parser("fetch-source", help="Fetch any configured or plugin source by slug")
     fetch_source.add_argument("source", help="Source slug from [sources.<slug>] or plugins")
-    fetch_source.add_argument("--root", default=".", help="Project root directory")
-    fetch_source.add_argument("--config", help="Path to jobsearch.toml")
     add_fetch_common(fetch_source)
     fetch_source.set_defaults(func=cmd_fetch_source)
 
@@ -1084,6 +1085,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_cmd = subparsers.add_parser("init", help="Scaffold config/ and profile/ from example templates")
     init_cmd.add_argument("--root", default=".", help="Project root directory")
     init_cmd.add_argument("--force", action="store_true", help="Overwrite existing scaffolded files")
+    init_cmd.add_argument(
+        "--template",
+        choices=["local", "cloud"],
+        default="local",
+        help="local: SQLite on this machine; cloud: shared Supabase over HTTPS",
+    )
     init_cmd.set_defaults(func=cmd_init)
 
     doctor = subparsers.add_parser("doctor", help="Validate config, connectors, and profile placeholders")
@@ -1105,11 +1112,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_cmd.add_argument("--fixture-dir", help=argparse.SUPPRESS)
     run_cmd.add_argument("--now", help=argparse.SUPPRESS)
-    run_cmd.add_argument(
-        "--journal-on-db-failure",
-        action="store_true",
-        help="If PostgreSQL is unreachable, keep payloads in an explicit local journal and exit 3",
-    )
     run_cmd.set_defaults(func=cmd_run)
 
     register_portability(subparsers)

@@ -11,7 +11,6 @@ from .app_config.profiles import JobboardProfile, load_profile
 from .app_config.schema import ConfigValidationError, scan_profile_placeholders
 from .config import load_settings
 from .core.models import CollectionContext, FetchMetrics
-from .db import connect
 from .jobboard_run import prepare_jobboard_run
 from .mail.generic.imap import MailImapClient
 from .mail.generic.smtp import SmtpMailSender
@@ -26,7 +25,15 @@ from .utils import normalize_space
 PROFILE_TEMPLATE_DIR = Path("profile/templates/generic")
 
 
-def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[str, Any]:
+CONFIG_TEMPLATES = {
+    "local": EXAMPLE_CONFIG_PATH,
+    "cloud": Path("config/jobsearch.cloud.example.toml"),
+}
+
+
+def scaffold_config(
+    *, root: Path | None = None, force: bool = False, template: str = "local"
+) -> dict[str, Any]:
     project_root = root or Path.cwd()
     config_dir = project_root / "config"
     profile_dir = project_root / "profile"
@@ -35,7 +42,9 @@ def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[st
 
     created: list[str] = []
     skipped: list[str] = []
-    example = project_root / EXAMPLE_CONFIG_PATH
+    if template not in CONFIG_TEMPLATES:
+        raise ValueError(f"Unknown config template {template!r}. Use one of: {', '.join(CONFIG_TEMPLATES)}")
+    example = project_root / CONFIG_TEMPLATES[template]
     target = config_dir / "jobsearch.toml"
     if target.exists() and not force:
         skipped.append(str(target))
@@ -101,14 +110,19 @@ def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
     return results
 
 
-def check_db_connectivity() -> list[str]:
-    settings = load_settings()
-    if not settings.db_url:
+def check_db_connectivity(store_options: dict[str, Any] | None = None) -> list[str]:
+    """Check the PostgreSQL transport named in config (direct or supabase_https)."""
+    from .store.registry import connect_postgres
+
+    options = store_options or {"backend": "postgres", "transport": "direct"}
+    if options.get("transport") != "supabase_https" and not load_settings().db_url:
         return ["database: JOBTRACKER_DATABASE_URL is not configured"]
     try:
-        with connect() as conn:
+        with connect_postgres(options) as conn:
             with conn.cursor() as cur:
-                cur.execute("select 1")
+                cur.execute("select 1 as ok")
+                cur.fetchone()
+                cur.execute("select count(*) as applied from jobtracker_schema_migrations")
                 cur.fetchone()
     except Exception as exc:
         return [f"database: {exc}"]
@@ -189,14 +203,9 @@ def run_doctor(
 
     from .automation_state import AutomationStateStore
     from .portability import state_db_path
-    from .store.registry import describe_store, required_backend
+    from .store.registry import describe_store
 
     report["checks"]["store"] = describe_store(config.store, root=config.root)
-    required = required_backend(config.store)
-    if required and report["checks"]["store"]["backend"] != required:
-        report["issues"].append(
-            f"store: backend {report['checks']['store']['backend']!r} but {required!r} is required"
-        )
     state_db = state_db_path(config.root)
     pending = AutomationStateStore(state_db).pending_runs() if state_db.exists() else []
     report["checks"]["pending_sync"] = [
@@ -205,13 +214,13 @@ def run_doctor(
     ]
     if pending:
         report["issues"].append(
-            f"pending_sync: {len(pending)} run(s) are only in the local journal; run sync-pending-runs"
+            f"pending_sync: {len(pending)} local run(s) failed to replay; rerun sync-pending-runs"
         )
 
     if not skip_network:
         report["checks"]["connectors"] = check_connector_health(config)
-        if config.store["backend"] in {"postgres", "postgresql", "supabase"}:
-            report["checks"]["database"] = check_db_connectivity()
+        if config.store["backend"] == "postgres":
+            report["checks"]["database"] = check_db_connectivity(config.store)
         if config.mail.get("inbox"):
             report["checks"]["imap"] = check_imap_connectivity(config.mail["inbox"], root=config.root)
         if config.mail.get("outbox"):
@@ -255,11 +264,9 @@ def run_pipeline(
     fixture_dir: str | Path | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
-    journal_on_db_failure: bool = False,
 ) -> dict[str, Any]:
-    from .db import MissingConfigurationError
-    from .portability import journal_pending, prune_after_run, state_db_path
-    from .store.registry import describe_store, enforce_required_backend
+    from .portability import prune_after_run
+    from .store.registry import describe_store
 
     project_root = root or Path.cwd()
     config = load_app_config(config_path, root=project_root)
@@ -279,19 +286,11 @@ def run_pipeline(
     stored: list[dict[str, Any]] = []
     receipt = describe_store(config.store, root=config.root)
     persistence = "dry_run" if dry_run else ("skipped" if not pipeline["include_db"] else "stored")
-    journaled: list[dict[str, Any]] = []
     pruned: dict[str, Any] | None = None
-    db_error: str | None = None
     with ExitStack() as stack:
         store = None
         if not dry_run and pipeline["include_db"]:
-            enforce_required_backend(config.store)
-            try:
-                store = stack.enter_context(open_job_store(config.store, root=config.root))
-            except MissingConfigurationError as exc:
-                if not journal_on_db_failure or receipt["backend"] != "postgres":
-                    raise
-                db_error = str(exc)
+            store = stack.enter_context(open_job_store(config.store, root=config.root))
         if store is not None:
             manifest = prepare_jobboard_run(
                 profile_slug=profile.slug,
@@ -336,28 +335,6 @@ def run_pipeline(
                 detail_limit=pipeline.get("detail_limit"),
             )
 
-    if db_error is not None:
-        persistence = "pending_sync"
-        state_db = state_db_path(config.root)
-        for provider_run in manifest.get("provider_runs") or []:
-            payload_path = provider_run.get("deduped_payload_path")
-            if payload_path:
-                journaled.append(
-                    journal_pending(
-                        state_db,
-                        provider_run["provider"],
-                        Path(payload_path),
-                        db_error,
-                        run_key=provider_run.get("run_key"),
-                    )
-                )
-        manifest["run"]["status"] = "partial"
-        manifest["db"] = {
-            "status": "unavailable",
-            "error": db_error,
-            "dedupe": "local files only; duplicates of runs from other environments are possible",
-        }
-
     notifications: list[dict[str, Any]] = []
     channels = pipeline.get("notify_channels") or []
     if channels and not dry_run:
@@ -384,9 +361,6 @@ def run_pipeline(
         "stored": stored,
         "notifications": notifications,
     }
-    if journaled:
-        result["journal"] = journaled
-        result["next_step"] = "jobtracker sync-pending-runs once the database is reachable"
     if pruned is not None:
         result["pruned"] = pruned
     return result

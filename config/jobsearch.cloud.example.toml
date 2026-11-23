@@ -1,0 +1,50 @@
+schema_version = 1
+
+# Cloud / multi-environment template: every environment uses the same shared
+# Supabase PostgreSQL database. `jobtracker init --template cloud` copies this file.
+# See Docs/onboarding/CLOUD_ENVIRONMENT.md.
+
+[paths]
+config_dir = "config"
+profile_dir = "profile"
+output_dir = "outputs"
+payload_dir = "outputs/automation-payloads"
+
+[store]
+# The only database this project uses. There is no fallback to another store.
+backend = "postgres"
+# supabase_https works behind HTTP-only proxies (cloud agent sandboxes).
+# Use "direct" only where the PostgreSQL protocol is reachable.
+transport = "supabase_https"
+# Full job texts kept in the database: shortlisted | all | none.
+text_retention = "shortlisted"
+# After a verified write, delete local artifacts the database already holds.
+auto_prune = true
+prune_min_age_hours = 24
+artifact_backend = "local"
+artifact_local_path = "outputs/artifacts"
+
+[pipelines.jobboards]
+type = "jobboard"
+profile = "generic"
+providers = ["example_jsonld"]
+include_db = true
+max_pages = 1
+
+# Config-only sources (no Python). Add the slug to a pipeline's providers list to run.
+# Every listing host must be allowed by the environment's network policy.
+[sources.example_jsonld]
+kind = "jsonld"
+listing_url = "https://careers.example.invalid/jobs"
+detail_limit = 10
+
+[sources.example_jsonld.role_lane]
+name = "configured-role-lane"
+include_terms = ["engineer", "developer"]
+exclude_terms = ["intern", "manager"]
+
+# HTTP-only sandboxes cannot open IMAP/SMTP. Use HTTPS notifiers instead, e.g.:
+# [pipelines.jobboards.notify]
+# channels = ["telegram"]
+# [notify.telegram]
+# kind = "telegram"

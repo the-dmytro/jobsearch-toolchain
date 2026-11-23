@@ -16,7 +16,13 @@ Relative paths are always resolved from `--root` or the selected project root, n
 
 Machine-readable rules are in [`schemas/jobsearch-config.v1.schema.json`](../schemas/jobsearch-config.v1.schema.json). Configs without `schema_version` remain readable with a deprecation warning through v0.2.
 
-## Local-first store
+## Store
+
+`[store].backend` is required: `"sqlite"` or `"postgres"`. There is no default and no
+fallback. PostgreSQL also needs `transport = "direct"` or `"supabase_https"`; see
+[Shared PostgreSQL store](DB/SHARED_STORE.md) and [cloud environments](onboarding/CLOUD_ENVIRONMENT.md).
+
+### Local-first store
 
 ```toml
 [store]
@@ -26,7 +32,7 @@ artifact_backend = "local"
 artifact_local_path = "outputs/artifacts"
 ```
 
-PostgreSQL is opt-in and reads its connection string from `JOBTRACKER_DATABASE_URL` in ignored `.env`.
+PostgreSQL is opt-in. `transport = "direct"` reads `JOBTRACKER_DATABASE_URL`; `transport = "supabase_https"` reads `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from ignored `.env` or the environment.
 
 ## Pipeline
 
