@@ -55,6 +55,9 @@ The CRM requires Node.js 20 and hosted Supabase Auth plus the PostgreSQL analyti
 
 ## Data boundaries
 
+For work across several machines or agents, follow [Shared PostgreSQL store](SHARED_STORE.md):
+required backend, shared automation state, documents, and verified local cleanup.
+
 - Structured shared data: selected PostgreSQL instance.
 - Local recovery and audit boundary: ignored JSON payload artifacts.
 - Long artifacts: local by default; optional object storage only when configured.

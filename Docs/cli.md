@@ -83,6 +83,22 @@ python -m jobtracker sync-pending-runs \
 The replay state database prevents already-synced `run_key` values from being sent
 again. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
 
+## Shared store, documents, and cleanup
+
+With PostgreSQL as the shared store, these commands keep work portable across
+environments. They never write to a local fallback. See
+[Shared PostgreSQL store](DB/SHARED_STORE.md).
+
+| Command | Purpose |
+| --- | --- |
+| `documents put/list/get` | Store and read drafts, reports, cover letters, notes |
+| `record-application` | Idempotently record a confirmed application from JSON |
+| `prune-local` | Delete local artifacts whose content is verified in the database |
+| `compact-db` | Remove legacy full-payload copies; apply job-text retention |
+
+`run` and `upsert-run` accept `--journal-on-db-failure` to keep an explicit local
+journal (exit code 3) when PostgreSQL is unreachable.
+
 ## Optional PostgreSQL and imports
 
 `migrate` and `db-smoke` target configured PostgreSQL/Supabase credentials. CSV import
