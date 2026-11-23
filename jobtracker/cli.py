@@ -12,7 +12,7 @@ from typing import Any
 
 from .app_config.loader import load_app_config
 from .automation import run_doctor, run_pipeline, scaffold_config
-from .automation_state import AutomationStateStore, open_automation_state
+from .automation_state import DEFAULT_STATE_DB, AutomationStateStore, open_automation_state
 from .calendar.base import CalendarInfo
 from .calendar.base import calendar_url as resolve_calendar_url
 from .calendar.events import CalendarService, build_reply, ics_to_specs, key_to_uid, settings_from_options
@@ -39,7 +39,7 @@ from .sources.registry import source_registry
 from .store.compact import sha256_json
 from .store.registry import canonical_backend, connect_postgres, describe_store, open_job_store
 from .upwork_email import parse_upwork_alert_payload
-from .utils import json_default, normalize_space, sha256_text, slugify
+from .utils import json_default, normalize_space, payload_run_key, sha256_text, slugify
 from .validation import validate_payload
 
 
@@ -286,7 +286,7 @@ def cmd_build_local_index(args: argparse.Namespace) -> int:
 
 def cmd_dedupe_candidates(args: argparse.Namespace) -> int:
     payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
-    run_key = _payload_run_key(payload)
+    run_key = payload_run_key(payload)
     index = LocalDedupeIndex.from_payload_dir(
         args.payload_dir,
         now=args.now,
@@ -516,15 +516,10 @@ def _open_mail_inbox(args: argparse.Namespace):
         yield inbox
 
 
-def _payload_run_key(payload: dict) -> str | None:
-    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
-    return normalize_space(run.get("run_key") or payload.get("run_key")) or None
-
-
 def _provider_from_payload(path: Path, payload: dict, explicit_provider: str | None) -> str:
     if explicit_provider:
         return slugify(explicit_provider)
-    run_key = _payload_run_key(payload)
+    run_key = payload_run_key(payload)
     if run_key and "-" in run_key:
         return slugify(run_key.split("-", 1)[0])
     return slugify(path.stem.split(".", 1)[0])
@@ -567,7 +562,7 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     selected = choose_replay_files(payload_paths)
     for payload_path in payload_paths:
         try:
-            if not _payload_run_key(json.loads(payload_path.read_text(encoding="utf-8"))):
+            if not payload_run_key(json.loads(payload_path.read_text(encoding="utf-8"))):
                 failed.append({"payload": str(payload_path), "error": "missing run_key"})
         except ValueError as exc:
             failed.append({"payload": str(payload_path), "error": f"invalid JSON: {exc}"})
@@ -639,7 +634,6 @@ def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
         if args.dry_run:
             result = collect_provider_run(
                 provider_slug,
-                conn=None,
                 dry_run=True,
                 payload_out=args.payload_out,
                 fixture_dir=getattr(args, "fixture_dir", None),
@@ -655,7 +649,6 @@ def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
             with open_job_store(config.store, root=config.root) as store:
                 result = collect_provider_run(
                     provider_slug,
-                    conn=getattr(store, "conn", None),
                     store=store,
                     dry_run=False,
                     payload_out=args.payload_out,
@@ -699,12 +692,11 @@ def cmd_fetch_source(args: argparse.Namespace) -> int:
         "detail_limit": getattr(args, "detail_limit", None),
     }
     if args.dry_run:
-        result = collect_provider_run(source_slug, conn=None, **kwargs)
+        result = collect_provider_run(source_slug, **kwargs)
     else:
         with open_job_store(config.store, root=config.root) as store:
             result = collect_provider_run(
                 source_slug,
-                conn=getattr(store, "conn", None),
                 store=store,
                 **kwargs,
             )
@@ -1250,7 +1242,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="Do not filter mixed-folder messages by provider sender/content",
         )
-        parser.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+        parser.add_argument("--state-db", default=DEFAULT_STATE_DB)
         parser.add_argument("--run-key")
         parser.add_argument("--output", help="Optional path to write fetched source payload JSON")
         parser.set_defaults(func=cmd_fetch_mail_folder)
@@ -1284,7 +1276,7 @@ def build_parser() -> argparse.ArgumentParser:
     send_email.add_argument("--subject", required=True)
     send_email.add_argument("--body-file", required=True)
     send_email.add_argument("--idempotency-key")
-    send_email.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+    send_email.add_argument("--state-db", default=DEFAULT_STATE_DB)
     send_email.add_argument("--root", default=".", help="Project root for config and relative paths")
     send_email.add_argument("--config", help="Path to jobsearch.toml")
     send_email.set_defaults(func=cmd_send_report_email)
@@ -1298,7 +1290,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing *.payload.json files",
     )
     sync.add_argument("--provider", help="Optional provider filter")
-    sync.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+    sync.add_argument("--state-db", default=DEFAULT_STATE_DB)
     sync.add_argument("--dry-run", action="store_true")
     sync.add_argument("--keep-going", action="store_true", help="Return success even if some payloads fail")
     sync.add_argument("--target-store", choices=["postgres"], default="postgres", help="Replay target store")

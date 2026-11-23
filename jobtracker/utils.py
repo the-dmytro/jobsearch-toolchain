@@ -126,3 +126,10 @@ def json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     return str(value)
+
+
+def payload_run_key(payload: dict[str, Any]) -> str | None:
+    """The ``run.run_key`` of an automation payload (or a legacy top-level ``run_key``)."""
+    run = payload.get("run") if isinstance(payload, dict) else None
+    key = normalize_space(run.get("run_key")) if isinstance(run, dict) else ""
+    return key or normalize_space(payload.get("run_key") if isinstance(payload, dict) else None) or None

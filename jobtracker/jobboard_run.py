@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import os
-from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -136,69 +135,67 @@ def prepare_jobboard_run(
 
     provider_runs: list[dict[str, Any]] = []
     overall_status = "completed"
-    with ExitStack():
-        conn = getattr(store, "conn", None) if store is not None else None
-        if store is not None:
-            db_status = {"status": "available", "backend": getattr(store, "backend", type(store).__name__)}
-        else:
-            if include_db:
-                raise ValueError("include_db requires the configured store; open it with open_job_store")
-            db_status = {"status": "skipped", "reason": "--no-db"}
-        for provider in provider_list:
-            provider_slug = normalize_space(provider).lower()
-            paths = _payload_paths(output_root, date_slug, profile.output_slug, provider_slug)
-            result = collect_provider_run(
-                provider_slug,
-                conn=conn,
-                dry_run=True,
-                payload_out=paths["payload"],
-                fixture_dir=fixture_dir,
-                targets_path=targets_path,
-                config_path=config_path,
-                root=project_root,
-                run_key=f"{provider_slug}-{profile.output_slug}-{date_slug}",
+    if store is not None:
+        db_status = {"status": "available", "backend": getattr(store, "backend", type(store).__name__)}
+    else:
+        if include_db:
+            raise ValueError("include_db requires the configured store; open it with open_job_store")
+        db_status = {"status": "skipped", "reason": "--no-db"}
+    for provider in provider_list:
+        provider_slug = normalize_space(provider).lower()
+        paths = _payload_paths(output_root, date_slug, profile.output_slug, provider_slug)
+        result = collect_provider_run(
+            provider_slug,
+            store=store,
+            dry_run=True,
+            payload_out=paths["payload"],
+            fixture_dir=fixture_dir,
+            targets_path=targets_path,
+            config_path=config_path,
+            root=project_root,
+            run_key=f"{provider_slug}-{profile.output_slug}-{date_slug}",
+            now=started_at,
+            max_pages=max_pages,
+            detail_limit=detail_limit,
+        )
+        raw_payload = _annotate_payload(result.payload, profile, provider_slug, targets_path)
+        _write_payload(paths["payload"], raw_payload)
+
+        validation = validate_payload(raw_payload, provider=provider_slug)
+        if validation.errors:
+            raise ValueError(f"{provider_slug} payload validation failed: {'; '.join(validation.errors)}")
+        _write_payload(paths["normalized"], validation.normalized)
+
+        if _uses_local_index(store):
+            index = LocalDedupeIndex.from_payload_dir(
+                payload_root,
                 now=started_at,
-                max_pages=max_pages,
-                detail_limit=detail_limit,
+                exclude_paths=[paths["payload"], paths["normalized"], paths["deduped"]],
+                exclude_run_keys=[result.run_key],
             )
-            raw_payload = _annotate_payload(result.payload, profile, provider_slug, targets_path)
-            _write_payload(paths["payload"], raw_payload)
+            deduped = dedupe_payload(validation.normalized, provider=provider_slug, index=index)
+        else:
+            deduped = copy.deepcopy(validation.normalized)
+        deduped = _store_dedupe(deduped, provider_slug, store, result.run_key)
+        _write_payload(paths["deduped"], deduped)
 
-            validation = validate_payload(raw_payload, provider=provider_slug)
-            if validation.errors:
-                raise ValueError(f"{provider_slug} payload validation failed: {'; '.join(validation.errors)}")
-            _write_payload(paths["normalized"], validation.normalized)
-
-            if _uses_local_index(store):
-                index = LocalDedupeIndex.from_payload_dir(
-                    payload_root,
-                    now=started_at,
-                    exclude_paths=[paths["payload"], paths["normalized"], paths["deduped"]],
-                    exclude_run_keys=[result.run_key],
-                )
-                deduped = dedupe_payload(validation.normalized, provider=provider_slug, index=index)
-            else:
-                deduped = copy.deepcopy(validation.normalized)
-            deduped = _store_dedupe(deduped, provider_slug, store, result.run_key)
-            _write_payload(paths["deduped"], deduped)
-
-            if result.status != "completed":
-                overall_status = "partial"
-            provider_runs.append(
-                {
-                    "provider": provider_slug,
-                    "run_key": result.run_key,
-                    "status": result.status,
-                    "summary": result.summary,
-                    "payload_path": str(paths["payload"]),
-                    "normalized_payload_path": str(paths["normalized"]),
-                    "deduped_payload_path": str(paths["deduped"]),
-                    "opportunities": len(deduped.get("opportunities") or []),
-                    "source_items": len(deduped.get("source_items") or []),
-                    "manual_review_blockers": result.blockers,
-                    "metrics": result.metrics.to_dict(result.status),
-                }
-            )
+        if result.status != "completed":
+            overall_status = "partial"
+        provider_runs.append(
+            {
+                "provider": provider_slug,
+                "run_key": result.run_key,
+                "status": result.status,
+                "summary": result.summary,
+                "payload_path": str(paths["payload"]),
+                "normalized_payload_path": str(paths["normalized"]),
+                "deduped_payload_path": str(paths["deduped"]),
+                "opportunities": len(deduped.get("opportunities") or []),
+                "source_items": len(deduped.get("source_items") or []),
+                "manual_review_blockers": result.blockers,
+                "metrics": result.metrics.to_dict(result.status),
+            }
+        )
 
     finished_at = _as_utc(now)
     report_path_value = Path(profile.report_path_template.format(date=date_slug))

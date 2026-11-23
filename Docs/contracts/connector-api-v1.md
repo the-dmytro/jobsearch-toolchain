@@ -31,6 +31,7 @@ Secrets are read from documented environment variables by the connector. They mu
 | `jobtracker.stores` | Job data store | `JobStore` |
 | `jobtracker.notifiers` | Run notifier | `Notifier` |
 | `jobtracker.calendars` | Calendar backend | `CalendarBackend` (amendment 1) |
+| `jobtracker.db_connectors` | How the PostgreSQL store reaches its database | `DatabaseConnector`, DB-CONNECTOR-V1 (amendment 2, [guide](../connectors/writing-a-database-connector.md)) |
 
 Built-ins take precedence over a plugin with the same normalized slug. Unknown slugs fail with an error that lists available connectors. A plugin load failure is reported by `doctor`; it must not expose secrets.
 
@@ -69,9 +70,10 @@ send(message: OutgoingMessage) -> SendReceipt
 upsert_run_payload(provider_slug: str, payload_path: str, report_path: str | None = None) -> UpsertResult
 check_duplicates(provider_slug: str, company: str | None, title: str | None, external_id: str | None = None) -> list[DuplicateMatch]
 export_application_summary(application_id: str) -> str
+verify_run(run_key: str) -> dict | None   # recommended; readback, None when the run is not stored
 ```
 
-Writes are idempotent by `run.run_key`. JSON payload artifacts remain the replay and recovery boundary.
+Writes are idempotent by `run.run_key` and are read back with `verify_run`. With the SQLite store, retained JSON payloads are the audit, replay and recovery boundary. With the shared PostgreSQL store, the database is the record: local payloads are temporary and `prune-local` removes them once the database holds their content. Stores without `verify_run` report `verified: false`.
 
 ### Notifier
 

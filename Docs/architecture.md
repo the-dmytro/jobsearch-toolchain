@@ -16,8 +16,9 @@ flowchart LR
   Mail --> Payload
   Payload --> Dedupe["Deterministic validation + dedupe"]
   Dedupe --> Store["STORE-V1"]
-  Store --> SQLite[("SQLite default")]
-  Store -. opt-in .-> PG[("PostgreSQL / hosted Supabase")]
+  Store --> SQLite[("SQLite (standard)")]
+  Store -. opt-in .-> Connector["DB connector<br/>selected by JOBTRACKER_STORE_CONNECTOR"]
+  Connector --> PG[("PostgreSQL (any host)")]
   Run -. opt-in .-> Notify["Notifier/sender factories"]
   PG -. optional .-> CRM["Next.js CRM + analytics views"]
 ```
@@ -33,7 +34,7 @@ flowchart TD
   Load --> Resolve["Resolve each source with ConnectorBuildContext"]
   Resolve --> Collect["Collect source_items + opportunities"]
   Collect --> Validate["Validate and normalize PAYLOAD-V1"]
-  Validate --> Local["Local artifact history dedupe"]
+  Validate --> Local["Local artifact history dedupe<br/>(SQLite store only)"]
   Local --> StoreDedupe["Configured JobStore duplicate check"]
   StoreDedupe --> Artifacts["Write payload, normalized, deduped, manifest"]
   Artifacts --> Persist{"dry run or include_db=false?"}
@@ -44,9 +45,13 @@ flowchart TD
 ```
 
 SQLite and PostgreSQL implement the same `upsert_run_payload`, `check_duplicates`,
-and `export_application_summary` operations. JSON payloads are the recovery boundary:
-`sync-pending-runs --target-store postgres` replays retained artifacts after a user
-opts into PostgreSQL.
+`export_application_summary` and `verify_run` operations. With the SQLite store, retained JSON payloads are the audit, replay and recovery boundary. With the shared PostgreSQL store, the database is the record: local payloads are temporary and `prune-local` removes them once the database holds their content. `sync-pending-runs
+--target-store postgres` replays retained artifacts after a user moves to PostgreSQL.
+
+The PostgreSQL store reaches its database through exactly one database connector
+(DB-CONNECTOR-V1): `postgres_direct` for any host, `supabase_https` for Supabase over
+HTTPS, or a plugin. The repository config names the database; each environment names
+its connector. See [environment setup](onboarding/ENVIRONMENT_SETUP.md).
 
 ## Connector resolution
 
@@ -61,6 +66,7 @@ the v0.2 compatibility window.
 | Mail inbox | IMAP or maildir | `jobtracker.mail.inboxes` |
 | Mail sender | SMTP | `jobtracker.mail.senders` |
 | Store | SQLite, PostgreSQL, memory | `jobtracker.stores` |
+| Database connector (PostgreSQL store) | `postgres_direct`, `supabase_https` via `JOBTRACKER_STORE_CONNECTOR` | `jobtracker.db_connectors` |
 | Notifier | Email/webhook/Slack/Telegram | `jobtracker.notifiers` |
 | Calendar | `[calendar] kind = "caldav"` or `"icsdir"` | `jobtracker.calendars` |
 

@@ -18,6 +18,9 @@ def _require_mapping(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
+POSTGRES_ALIASES = frozenset({"postgres", "postgresql", "supabase"})
+
+
 def _require_str(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigValidationError(f"{path} must be a non-empty string")
@@ -85,7 +88,7 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
             "There is no default and no fallback between them."
         )
     backend = _require_str(store_raw.get("backend"), "store.backend").lower()
-    if backend in {"postgresql", "supabase"}:
+    if backend in POSTGRES_ALIASES:
         backend = "postgres"
     store = dict(store_raw)
     store.update(

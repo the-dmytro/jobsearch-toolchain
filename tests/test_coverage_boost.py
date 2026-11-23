@@ -84,12 +84,11 @@ class LiveFetcherTests(unittest.TestCase):
 
 
 class ConfigAndDbHelperTests(unittest.TestCase):
-    def test_load_settings_defaults_to_local_storage(self) -> None:
+    def test_load_settings_defaults_to_local_artifacts(self) -> None:
         with mock.patch("jobtracker.config.load_env_file"):
             with mock.patch.dict(os.environ, {}, clear=True):
                 settings = load_settings()
 
-        self.assertEqual(settings.store_backend, "sqlite")
         self.assertEqual(settings.artifact_backend, "local")
 
     def test_load_settings_reads_env(self) -> None:
@@ -98,14 +97,12 @@ class ConfigAndDbHelperTests(unittest.TestCase):
             {
                 "JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:5432/db",
                 "SUPABASE_TEST_DB_URL": "postgresql://u:p@127.0.0.1:5432/test",
-                "JOBTRACKER_STORE_BACKEND": "sqlite",
                 "JOBTRACKER_ARTIFACT_BACKEND": "local",
             },
             clear=False,
         ):
             settings = load_settings()
         self.assertIn("127.0.0.1", settings.db_url or "")
-        self.assertEqual(settings.store_backend, "sqlite")
 
     def test_db_url_helpers(self) -> None:
         self.assertEqual(_host_from_db_url("postgresql://u:p@localhost:5432/db"), "localhost")

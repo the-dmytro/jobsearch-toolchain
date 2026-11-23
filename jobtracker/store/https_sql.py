@@ -181,17 +181,7 @@ class HttpsConnection:
         return None
 
     def rpc(self, query: str, mode: str) -> Any:
-        body = json.dumps({"query": query, "mode": mode}).encode("utf-8")
-        request = urllib.request.Request(
-            self.base_url + RPC_PATH,
-            data=body,
-            method="POST",
-            headers={
-                "apikey": self.api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-        )
+        request = rpc_request(self.base_url, self.api_key, query, mode)
         self.requests += 1
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
@@ -216,6 +206,19 @@ class HttpsConnection:
             raise HttpsSqlError(f"{message} [{payload.get('code') or exc.code}]") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise MissingConfigurationError(f"Cannot reach {self.host} over HTTPS: {exc}") from exc
+
+
+def rpc_request(base_url: str, api_key: str | None, query: str, mode: str) -> urllib.request.Request:
+    """The one HTTP request shape for the gateway, shared by connections and probes."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if api_key:
+        headers["apikey"] = api_key
+    return urllib.request.Request(
+        base_url.rstrip("/") + RPC_PATH,
+        data=json.dumps({"query": query, "mode": mode}).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
 
 
 def https_settings() -> tuple[str, str]:

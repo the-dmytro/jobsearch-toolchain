@@ -18,7 +18,7 @@ Ask for missing business constraints. Scheduled runs must not browse blocked Upw
 .venv/bin/python -m jobtracker upsert-run --provider upwork --payload outputs/automation-payloads/upwork-mail.deduped.payload.json
 ```
 
-The commands use the configured store. Local artifacts remain the recovery boundary if optional PostgreSQL, mail sending, or notifications fail.
+The commands use only the configured store. If it is unreachable they fail; nothing is redirected elsewhere. Keep local artifacts until the store holds them (`prune-local` checks this).
 
 For each opportunity, separate verified fit, constraint conflicts, unknowns, and recommendation. Draft proposal material only when requested. Do not invent portfolio examples, outcomes, identity, rates, or availability.
 

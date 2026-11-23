@@ -14,24 +14,17 @@ from pathlib import Path
 from typing import Any
 
 from .app_config.loader import AppConfig
+from .automation_state import DEFAULT_STATE_DB
 from .retention import apply_prune, candidate_files, classify, plan_prune, summarize
 from .store.registry import canonical_backend
-from .utils import normalize_space
+from .utils import payload_run_key
 
-DEFAULT_STATE_DB = Path("outputs/automation-state/state.sqlite")
 KIND_PRIORITY = {"evaluated": 0, "deduped": 1, "raw": 2, "normalized": 3}
 
 
 def state_db_path(root: Path, value: str | Path | None = None) -> Path:
     path = Path(value or DEFAULT_STATE_DB)
     return path if path.is_absolute() else root / path
-
-
-def payload_run_key(payload: dict[str, Any]) -> str | None:
-    run = payload.get("run") or {}
-    return normalize_space(run.get("run_key") if isinstance(run, dict) else None) or normalize_space(
-        payload.get("run_key")
-    )
 
 
 def choose_replay_files(paths: list[Path]) -> dict[str, Path]:

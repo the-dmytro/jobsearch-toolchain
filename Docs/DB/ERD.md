@@ -37,6 +37,17 @@ erDiagram
     contacts ||--o{ communications : contact_id
     artifacts ||--o{ communications : artifact_id
 
+    opportunities ||--o{ opportunity_texts : opportunity_id
+
+    opportunities ||--o{ documents : opportunity_id
+    applications ||--o{ documents : application_id
+    organizations ||--o{ documents : organization_id
+    automation_runs ||--o{ documents : automation_run_id
+
+    providers ||--o{ email_notifications : provider_id
+    automation_runs ||--o{ email_notifications : automation_run_id
+    automation_runs ||--o{ automation_run_events : automation_run_id
+
     providers ||--o{ legacy_import_rows : provider_id
     organizations ||--o{ legacy_import_rows : organization_id
     opportunities ||--o{ legacy_import_rows : opportunity_id

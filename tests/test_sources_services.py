@@ -48,7 +48,6 @@ class BoardFixtureRunTests(unittest.TestCase):
     def collect(self, provider: str, payload_out: Path | None = None):
         return collect_provider_run(
             provider,
-            conn=None,
             dry_run=True,
             payload_out=payload_out,
             fixture_dir=FIXTURE_DIR,
@@ -122,7 +121,6 @@ class BoardFixtureRunTests(unittest.TestCase):
         with self.assertRaises(Exception) as caught:
             collect_provider_run(
                 "definitely-not-a-provider",
-                conn=None,
                 dry_run=True,
                 fixture_dir=FIXTURE_DIR,
                 targets_path=TARGETS_PATH,
@@ -135,7 +133,6 @@ class GreenhouseFixtureRunTests(unittest.TestCase):
     def test_greenhouse_board_token_run(self) -> None:
         result = collect_provider_run(
             "greenhouse",
-            conn=None,
             dry_run=True,
             fixture_dir=FIXTURE_DIR,
             targets_path=TARGETS_PATH,

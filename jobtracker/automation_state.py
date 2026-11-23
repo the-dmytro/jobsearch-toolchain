@@ -19,10 +19,13 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=json_default, sort_keys=True)
 
 
+DEFAULT_STATE_DB = "outputs/automation-state/state.sqlite"
+
+
 class AutomationStateStore:
     backend = "sqlite"
 
-    def __init__(self, path: str | Path = "outputs/automation-state/state.sqlite") -> None:
+    def __init__(self, path: str | Path = DEFAULT_STATE_DB) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
