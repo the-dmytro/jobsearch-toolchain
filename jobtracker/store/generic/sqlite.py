@@ -10,6 +10,7 @@ from ..base import DuplicateMatch, UpsertResult
 
 class SqliteJobStore:
     SCHEMA_VERSION = 1
+    backend = "sqlite"
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -100,6 +101,14 @@ class SqliteJobStore:
                 )
             conn.commit()
         return UpsertResult(run_key=run_key, opportunities=len(opportunities), evaluations=evaluations)
+
+    def verify_run(self, run_key: str) -> dict | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "select run_key, provider_slug, created_at from automation_runs where run_key = ?",
+                (run_key,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def check_duplicates(
         self,

@@ -8,6 +8,131 @@ from ...utils import json_default, normalize_name, normalize_space, parse_timest
 from ...validation import validate_payload
 from ..artifacts.supabase_storage import SupabaseArtifactStore
 from ..base import DuplicateMatch, UpsertResult
+from ..compact import (
+    compact_facts,
+    excerpt,
+    keep_full_text,
+    normalize_text_retention,
+    sha256_json,
+    sha256_text,
+    without_keys,
+)
+
+OPPORTUNITY_COLUMN_KEYS = frozenset(
+    {
+        "opportunity_type",
+        "external_id",
+        "provider_external_id",
+        "linkedin_job_id",
+        "upwork_job_id",
+        "company",
+        "organization",
+        "client",
+        "title",
+        "role_title",
+        "job_title",
+        "source_url",
+        "job_url",
+        "url",
+        "apply_url",
+        "application_url",
+        "location",
+        "location_text",
+        "work_model",
+        "engagement_type",
+        "employment_type",
+        "job_type",
+        "seniority",
+        "domain",
+        "company_domain",
+        "compensation_text",
+        "salary_listed",
+        "budget",
+        "compensation_currency",
+        "currency",
+        "budget_type",
+        "source_status",
+        "first_seen_at",
+        "first_seen",
+        "last_seen_at",
+        "last_seen",
+        "evaluation",
+        "application",
+        "source_items",
+        "external_id_aliases",
+        "requirement_tags",
+        "raw_text",
+        "description",
+    }
+)
+SOURCE_ITEM_COLUMN_KEYS = frozenset(
+    {
+        "source_type",
+        "external_id",
+        "message_id",
+        "id",
+        "source_url",
+        "url",
+        "gmail_link",
+        "timestamp",
+        "source_timestamp",
+        "email_date",
+        "title",
+        "subject",
+        "summary",
+        "snippet",
+        "raw_text",
+    }
+)
+EVALUATION_COLUMN_KEYS = frozenset(
+    {
+        "score",
+        "confidence",
+        "recommendation",
+        "priority",
+        "verdict",
+        "main_match",
+        "reason",
+        "main_risks",
+        "risk",
+        "missing_information",
+        "positioning_angle",
+        "salary_expectation",
+        "pricing_recommendation",
+        "proposal_text",
+        "action_next",
+        "action",
+        "manual_review_reason",
+    }
+)
+APPLICATION_COLUMN_KEYS = frozenset(
+    {
+        "application_channel",
+        "status",
+        "current_stage",
+        "stage",
+        "applied_at",
+        "salary_requested_text",
+        "outcome",
+        "decline_reason",
+        "notes",
+    }
+)
+
+
+def _text_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = normalize_space(str(item)) if item is not None else ""
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _json(value: Any) -> str:
@@ -80,7 +205,22 @@ def _artifact(conn: Any, report_path: str | None, provider_slug: str, run_key: s
         return cur.fetchone()["id"]
 
 
-def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> str:
+def _opportunity_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "payload_sha256": sha256_json(item),
+        "facts": compact_facts(without_keys(item, OPPORTUNITY_COLUMN_KEYS)),
+    }
+
+
+def _upsert_opportunity(
+    conn: Any, provider_id: str, item: dict[str, Any], description: str | None = None
+) -> str:
+    description = description or item.get("description") or item.get("raw_text")
+    description_sha = sha256_text(normalize_space(description)) if normalize_space(description) else None
+    description_excerpt = excerpt(description)
+    aliases = _text_list(item.get("external_id_aliases"))
+    evaluation = item.get("evaluation") if isinstance(item.get("evaluation"), dict) else {}
+    tags = _text_list(item.get("requirement_tags") or evaluation.get("requirement_tags"))
     company = item.get("company") or item.get("organization") or item.get("client")
     organization_id = _organization(conn, company, {"last_payload_company": company})
     title = (
@@ -150,7 +290,11 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
             normalize_space(item.get("source_status")) or "seen",
             parse_timestamp(item.get("first_seen_at") or item.get("first_seen")),
             parse_timestamp(item.get("last_seen_at") or item.get("last_seen")) or utc_now(),
-            _json({"payload": item}),
+            description_sha,
+            description_excerpt,
+            aliases,
+            tags,
+            _json(_opportunity_metadata(item)),
         )
         if existing:
             update_params = (
@@ -180,7 +324,12 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
                 parse_timestamp(item.get("first_seen_at") or item.get("first_seen")),
                 parse_timestamp(item.get("last_seen_at") or item.get("last_seen")) or utc_now(),
                 parse_timestamp(item.get("last_seen_at") or item.get("last_seen")) or utc_now(),
-                _json({"payload": item}),
+                description_sha,
+                description_excerpt,
+                aliases,
+                tags,
+                tags,
+                _json(_opportunity_metadata(item)),
                 existing["id"],
             )
             cur.execute(
@@ -205,7 +354,17 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
                   source_status = coalesce(%s, source_status),
                   first_seen_at = coalesce(first_seen_at, %s),
                   last_seen_at = greatest(coalesce(last_seen_at, %s), %s),
-                  metadata = metadata || %s::jsonb,
+                  description_sha256 = coalesce(%s, description_sha256),
+                  description_excerpt = coalesce(%s, description_excerpt),
+                  external_id_aliases = (
+                    select coalesce(array_agg(distinct alias), '{}')
+                    from unnest(external_id_aliases || %s::text[]) as alias
+                  ),
+                  requirement_tags = case
+                    when cardinality(%s::text[]) > 0 then %s::text[]
+                    else requirement_tags
+                  end,
+                  metadata = (metadata - 'payload') || %s::jsonb,
                   updated_at = now()
                 where id = %s
                 returning id
@@ -220,9 +379,13 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
                   external_id, source_url, apply_url, location_text, work_model,
                   engagement_type, seniority, domain, compensation_text,
                   compensation_currency, budget_type, source_status,
-                  first_seen_at, last_seen_at, metadata
+                  first_seen_at, last_seen_at, description_sha256, description_excerpt,
+                  external_id_aliases, requirement_tags, metadata
                 )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                values (
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s::text[], %s::text[], %s::jsonb
+                )
                 returning id
                 """,
                 params,
@@ -231,16 +394,28 @@ def _upsert_opportunity(conn: Any, provider_id: str, item: dict[str, Any]) -> st
 
 
 def _insert_source_item(
-    conn: Any, provider_id: str, run_id: str, item: dict[str, Any], opportunity_id: str | None = None
+    conn: Any,
+    provider_id: str,
+    run_id: str,
+    item: dict[str, Any],
+    opportunity_id: str | None = None,
+    *,
+    keep_raw_text: bool = False,
 ) -> str:
+    raw_text = item.get("raw_text")
+    body = normalize_space(raw_text)
+    metadata: dict[str, Any] = {"facts": compact_facts(without_keys(item, SOURCE_ITEM_COLUMN_KEYS))}
+    if body:
+        metadata["raw_text_chars"] = len(raw_text)
     with conn.cursor() as cur:
         cur.execute(
             """
             insert into source_items(
               provider_id, opportunity_id, automation_run_id, source_type,
-              external_id, source_url, source_timestamp, title, summary, raw_text, metadata
+              external_id, source_url, source_timestamp, title, summary, raw_text,
+              body_sha256, metadata
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             on conflict(provider_id, source_type, external_id) where external_id is not null
             do update set
               opportunity_id = coalesce(excluded.opportunity_id, source_items.opportunity_id),
@@ -250,7 +425,8 @@ def _insert_source_item(
               title = coalesce(excluded.title, source_items.title),
               summary = coalesce(excluded.summary, source_items.summary),
               raw_text = coalesce(excluded.raw_text, source_items.raw_text),
-              metadata = source_items.metadata || excluded.metadata,
+              body_sha256 = coalesce(excluded.body_sha256, source_items.body_sha256),
+              metadata = (source_items.metadata - 'payload') || excluded.metadata,
               updated_at = now()
             returning id
             """,
@@ -266,8 +442,9 @@ def _insert_source_item(
                 ),
                 normalize_space(item.get("title") or item.get("subject")) or None,
                 normalize_space(item.get("summary") or item.get("snippet")) or None,
-                item.get("raw_text"),
-                _json({"payload": item}),
+                raw_text if keep_raw_text else None,
+                sha256_text(body) if body else None,
+                _json(metadata),
             ),
         )
         return cur.fetchone()["id"]
@@ -346,17 +523,55 @@ def _insert_evaluation(
                 evaluation.get("proposal_text"),
                 evaluation.get("action_next") or evaluation.get("action"),
                 evaluation.get("manual_review_reason"),
-                _json({"payload": evaluation}),
+                _json({"facts": compact_facts(without_keys(evaluation, EVALUATION_COLUMN_KEYS))}),
             ),
         )
         return cur.fetchone()["id"]
 
 
 def _insert_application(conn: Any, provider_id: str, opportunity_id: str, application: dict[str, Any]) -> str:
+    """Create the opportunity's application, or update it on replay (never duplicates)."""
+    metadata = _json({"facts": compact_facts(without_keys(application, APPLICATION_COLUMN_KEYS))})
     with conn.cursor() as cur:
         cur.execute("select organization_id from opportunities where id = %s", (opportunity_id,))
         row = cur.fetchone()
         organization_id = row["organization_id"] if row else None
+        cur.execute(
+            "select id from applications where opportunity_id = %s order by created_at asc limit 1",
+            (opportunity_id,),
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.execute(
+                """
+                update applications set
+                  application_channel = coalesce(%s, application_channel),
+                  status = coalesce(%s, status),
+                  current_stage = coalesce(%s, current_stage),
+                  applied_at = coalesce(%s, applied_at),
+                  salary_requested_text = coalesce(%s, salary_requested_text),
+                  outcome = coalesce(%s, outcome),
+                  decline_reason = coalesce(%s, decline_reason),
+                  notes = coalesce(%s, notes),
+                  metadata = (metadata - 'payload') || %s::jsonb,
+                  updated_at = now()
+                where id = %s
+                returning id
+                """,
+                (
+                    application.get("application_channel"),
+                    application.get("status"),
+                    application.get("current_stage") or application.get("stage"),
+                    application.get("applied_at"),
+                    application.get("salary_requested_text"),
+                    application.get("outcome"),
+                    application.get("decline_reason"),
+                    application.get("notes"),
+                    metadata,
+                    existing["id"],
+                ),
+            )
+            return cur.fetchone()["id"]
         cur.execute(
             """
             insert into applications(
@@ -379,16 +594,122 @@ def _insert_application(conn: Any, provider_id: str, opportunity_id: str, applic
                 application.get("outcome"),
                 application.get("decline_reason"),
                 application.get("notes"),
-                _json({"payload": application}),
+                metadata,
+            ),
+        )
+        return cur.fetchone()["id"]
+
+
+def _run_metadata(payload: dict[str, Any], payload_path: str | Path, payload_sha: str) -> dict[str, Any]:
+    """Compact run facts. ``payload_sha256`` hashes the payload file as read from disk."""
+    run = payload.get("run") or {}
+    metadata: dict[str, Any] = {
+        "payload_sha256": payload_sha,
+        "payload_path": str(payload_path),
+        "source_items": len(payload.get("source_items") or []),
+        "opportunities": len(payload.get("opportunities") or []),
+    }
+    if payload.get("manual_review_blockers"):
+        metadata["manual_review_blockers"] = compact_facts(payload["manual_review_blockers"])
+    if isinstance(run, dict) and run.get("metrics"):
+        metadata["metrics"] = compact_facts(run["metrics"])
+    if isinstance(payload.get("metadata"), dict):
+        metadata["facts"] = compact_facts(payload["metadata"])
+    return metadata
+
+
+def _source_texts(payload: dict[str, Any]) -> dict[str, str]:
+    texts: dict[str, str] = {}
+    for source in payload.get("source_items") or payload.get("emails") or []:
+        if not isinstance(source, dict):
+            continue
+        external_id = normalize_space(
+            source.get("external_id") or source.get("message_id") or source.get("id")
+        )
+        raw_text = source.get("raw_text")
+        if external_id and isinstance(raw_text, str) and normalize_space(raw_text):
+            texts[external_id] = raw_text
+    return texts
+
+
+def _opportunity_text(item: dict[str, Any], texts: dict[str, str]) -> tuple[str | None, str | None]:
+    for key in ("description", "raw_text"):
+        value = item.get(key)
+        if isinstance(value, str) and normalize_space(value):
+            return value, None
+    for source in item.get("source_items") or []:
+        if isinstance(source, dict):
+            value = source.get("raw_text")
+            ref = normalize_space(source.get("external_id"))
+            if isinstance(value, str) and normalize_space(value):
+                return value, ref or None
+        else:
+            ref = normalize_space(str(source))
+            if ref in texts:
+                return texts[ref], ref
+    return None, None
+
+
+def _store_opportunity_text(
+    conn: Any, opportunity_id: str, text: str, reason: str, source_ref: str | None
+) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into opportunity_texts(
+              opportunity_id, content_sha256, body, retention_reason, source_item_external_id, fetched_at
+            )
+            values (%s, %s, %s, %s, %s, now())
+            on conflict(opportunity_id, content_sha256) do nothing
+            returning id
+            """,
+            (opportunity_id, sha256_text(normalize_space(text)), text, reason, source_ref),
+        )
+        return cur.fetchone() is not None
+
+
+def _store_report_document(conn: Any, report_path: str, run_id: str, run_key: str) -> str | None:
+    path = Path(report_path)
+    if not path.exists():
+        return None
+    body = path.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into documents(
+              kind, status, title, body, content_sha256, source_key, automation_run_id, created_by, metadata
+            )
+            values ('report', 'final', %s, %s, %s, %s, %s, 'automation', %s::jsonb)
+            on conflict(source_key) where source_key is not null do update set
+              body = excluded.body,
+              content_sha256 = excluded.content_sha256,
+              automation_run_id = excluded.automation_run_id,
+              updated_at = now()
+            returning id
+            """,
+            (
+                path.name,
+                body,
+                sha256_text(body),
+                f"report:{run_key}:{path.name}",
+                run_id,
+                _json({"local_path": str(path)}),
             ),
         )
         return cur.fetchone()["id"]
 
 
 def _upsert_run_payload(
-    conn: Any, provider_slug: str, payload_path: str | Path, report_path: str | None = None
+    conn: Any,
+    provider_slug: str,
+    payload_path: str | Path,
+    report_path: str | None = None,
+    *,
+    text_retention: str = "shortlisted",
 ) -> UpsertResult:
+    text_retention = normalize_text_retention(text_retention)
     payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
+    payload_sha = sha256_json(payload)
     provider_slug = slugify(provider_slug)
     validation = validate_payload(payload, provider=provider_slug)
     if validation.errors:
@@ -423,7 +744,7 @@ def _upsert_run_payload(
                   evaluations_count = excluded.evaluations_count,
                   manual_review_count = excluded.manual_review_count,
                   summary = excluded.summary,
-                  metadata = automation_runs.metadata || excluded.metadata,
+                  metadata = (automation_runs.metadata - 'payload') || excluded.metadata,
                   updated_at = now()
                 returning id
                 """,
@@ -441,23 +762,32 @@ def _upsert_run_payload(
                     int(run.get("evaluations_count") or 0),
                     int(run.get("manual_review_count") or len(payload.get("manual_review_blockers") or [])),
                     run.get("summary") or payload.get("summary"),
-                    _json({"payload": payload}),
+                    _json(_run_metadata(payload, payload_path, payload_sha)),
                 ),
             )
             run_id = cur.fetchone()["id"]
             cur.execute("delete from evaluations where automation_run_id = %s", (run_id,))
 
+        keep_raw = text_retention == "all"
+        texts = _source_texts(payload)
         for source in payload.get("source_items") or payload.get("emails") or []:
-            _insert_source_item(conn, provider_id, run_id, source)
+            _insert_source_item(conn, provider_id, run_id, source, keep_raw_text=keep_raw)
 
         opportunity_count = 0
         evaluation_count = 0
+        stored_texts = 0
         for item in payload.get("opportunities") or payload.get("jobs") or []:
-            opportunity_id = _upsert_opportunity(conn, provider_id, item)
+            text, text_ref = _opportunity_text(item, texts)
+            opportunity_id = _upsert_opportunity(conn, provider_id, item, description=text)
             opportunity_count += 1
+            reason = keep_full_text(item, text_retention)
+            if text and reason and _store_opportunity_text(conn, opportunity_id, text, reason, text_ref):
+                stored_texts += 1
             for source in item.get("source_items") or []:
                 if isinstance(source, dict):
-                    _insert_source_item(conn, provider_id, run_id, source, opportunity_id)
+                    _insert_source_item(
+                        conn, provider_id, run_id, source, opportunity_id, keep_raw_text=keep_raw
+                    )
                 else:
                     source_ref = normalize_space(str(source))
                     if source_ref:
@@ -481,8 +811,32 @@ def _upsert_run_payload(
                 """,
                 (opportunity_count, evaluation_count, run_id),
             )
+        report_document_id = (
+            _store_report_document(conn, report_path, run_id, run_key) if report_path else None
+        )
 
-    return UpsertResult(run_key=run_key, opportunities=opportunity_count, evaluations=evaluation_count)
+    return UpsertResult(
+        run_key=run_key,
+        opportunities=opportunity_count,
+        evaluations=evaluation_count,
+        stored_texts=stored_texts,
+        report_document_id=str(report_document_id) if report_document_id else None,
+    )
+
+
+def _verify_run(conn: Any, run_key: str) -> dict[str, Any] | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select r.run_key, r.status, r.opportunities_count, r.evaluations_count,
+                   r.metadata ->> 'payload_sha256' as payload_sha256, r.updated_at
+            from automation_runs r
+            where r.run_key = %s
+            """,
+            (run_key,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def _check_duplicates(
@@ -705,8 +1059,12 @@ def _export_application_summary(conn: Any, application_id: str) -> str:
 
 
 class PostgresJobStore:
-    def __init__(self, conn: Any) -> None:
+    backend = "postgres"
+
+    def __init__(self, conn: Any, options: dict[str, Any] | None = None) -> None:
         self.conn = conn
+        self.options = dict(options or {})
+        self.text_retention = normalize_text_retention(self.options.get("text_retention"))
 
     def upsert_run_payload(
         self,
@@ -714,7 +1072,22 @@ class PostgresJobStore:
         payload_path: str | Path,
         report_path: str | None = None,
     ) -> UpsertResult:
-        return _upsert_run_payload(self.conn, provider_slug, payload_path, report_path=report_path)
+        return _upsert_run_payload(
+            self.conn,
+            provider_slug,
+            payload_path,
+            report_path=report_path,
+            text_retention=self.text_retention,
+        )
+
+    def verify_run(self, run_key: str) -> dict[str, Any] | None:
+        """Read back a stored run; ``None`` means the run is not in the database."""
+        return _verify_run(self.conn, run_key)
+
+    def find_document_by_sha(self, content_sha256: str) -> dict[str, Any] | None:
+        from .postgres_documents import find_document_by_sha
+
+        return find_document_by_sha(self.conn, content_sha256)
 
     def check_duplicates(
         self,

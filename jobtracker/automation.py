@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -187,6 +187,27 @@ def run_doctor(
         report["ok"] = False
         report["issues"].extend(item["issue"] for item in placeholder_issues)
 
+    from .automation_state import AutomationStateStore
+    from .portability import state_db_path
+    from .store.registry import describe_store, required_backend
+
+    report["checks"]["store"] = describe_store(config.store, root=config.root)
+    required = required_backend(config.store)
+    if required and report["checks"]["store"]["backend"] != required:
+        report["issues"].append(
+            f"store: backend {report['checks']['store']['backend']!r} but {required!r} is required"
+        )
+    state_db = state_db_path(config.root)
+    pending = AutomationStateStore(state_db).pending_runs() if state_db.exists() else []
+    report["checks"]["pending_sync"] = [
+        {"run_key": row["run_key"], "payload_path": row["payload_path"], "last_error": row["last_error"]}
+        for row in pending
+    ]
+    if pending:
+        report["issues"].append(
+            f"pending_sync: {len(pending)} run(s) are only in the local journal; run sync-pending-runs"
+        )
+
     if not skip_network:
         report["checks"]["connectors"] = check_connector_health(config)
         if config.store["backend"] in {"postgres", "postgresql", "supabase"}:
@@ -198,7 +219,7 @@ def run_doctor(
         if config.notify:
             report["checks"]["notifiers"] = check_notifier_health(config)
         for section, issues in report["checks"].items():
-            if section == "profile_placeholders":
+            if section in {"profile_placeholders", "store", "pending_sync"}:
                 continue
             if isinstance(issues, dict):
                 for name, entries in issues.items():
@@ -234,7 +255,12 @@ def run_pipeline(
     fixture_dir: str | Path | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
+    journal_on_db_failure: bool = False,
 ) -> dict[str, Any]:
+    from .db import MissingConfigurationError
+    from .portability import journal_pending, prune_after_run, state_db_path
+    from .store.registry import describe_store, enforce_required_backend
+
     project_root = root or Path.cwd()
     config = load_app_config(config_path, root=project_root)
     pipeline_key = normalize_space(pipeline_name).lower()
@@ -251,8 +277,22 @@ def run_pipeline(
     resolved_fixture_dir = config.resolve_path(fixture_dir) if fixture_dir else None
 
     stored: list[dict[str, Any]] = []
-    if not dry_run and pipeline["include_db"]:
-        with open_job_store(config.store, root=config.root) as store:
+    receipt = describe_store(config.store, root=config.root)
+    persistence = "dry_run" if dry_run else ("skipped" if not pipeline["include_db"] else "stored")
+    journaled: list[dict[str, Any]] = []
+    pruned: dict[str, Any] | None = None
+    db_error: str | None = None
+    with ExitStack() as stack:
+        store = None
+        if not dry_run and pipeline["include_db"]:
+            enforce_required_backend(config.store)
+            try:
+                store = stack.enter_context(open_job_store(config.store, root=config.root))
+            except MissingConfigurationError as exc:
+                if not journal_on_db_failure or receipt["backend"] != "postgres":
+                    raise
+                db_error = str(exc)
+        if store is not None:
             manifest = prepare_jobboard_run(
                 profile_slug=profile.slug,
                 providers=pipeline["providers"],
@@ -273,22 +313,50 @@ def run_pipeline(
                 if not payload_path:
                     continue
                 result = store.upsert_run_payload(provider_run["provider"], payload_path)
-                stored.append({"provider": provider_run["provider"], **vars(result)})
-    else:
-        manifest = prepare_jobboard_run(
-            profile_slug=profile.slug,
-            providers=pipeline["providers"],
-            output_dir=output_dir,
-            payload_dir=payload_dir,
-            profile_dir=config.profile_dir,
-            root=config.root,
-            include_db=False,
-            config_path=config.sources[0],
-            fixture_dir=resolved_fixture_dir,
-            now=now,
-            max_pages=int(pipeline["max_pages"]),
-            detail_limit=pipeline.get("detail_limit"),
-        )
+                verify = getattr(store, "verify_run", None)
+                if verify and not verify(result.run_key):
+                    raise RuntimeError(f"Readback failed: run {result.run_key} is not in the store")
+                stored.append(
+                    {"provider": provider_run["provider"], **vars(result), "verified": bool(verify)}
+                )
+            pruned = prune_after_run(config, store, manifest)
+        else:
+            manifest = prepare_jobboard_run(
+                profile_slug=profile.slug,
+                providers=pipeline["providers"],
+                output_dir=output_dir,
+                payload_dir=payload_dir,
+                profile_dir=config.profile_dir,
+                root=config.root,
+                include_db=False,
+                config_path=config.sources[0],
+                fixture_dir=resolved_fixture_dir,
+                now=now,
+                max_pages=int(pipeline["max_pages"]),
+                detail_limit=pipeline.get("detail_limit"),
+            )
+
+    if db_error is not None:
+        persistence = "pending_sync"
+        state_db = state_db_path(config.root)
+        for provider_run in manifest.get("provider_runs") or []:
+            payload_path = provider_run.get("deduped_payload_path")
+            if payload_path:
+                journaled.append(
+                    journal_pending(
+                        state_db,
+                        provider_run["provider"],
+                        Path(payload_path),
+                        db_error,
+                        run_key=provider_run.get("run_key"),
+                    )
+                )
+        manifest["run"]["status"] = "partial"
+        manifest["db"] = {
+            "status": "unavailable",
+            "error": db_error,
+            "dedupe": "local files only; duplicates of runs from other environments are possible",
+        }
 
     notifications: list[dict[str, Any]] = []
     channels = pipeline.get("notify_channels") or []
@@ -307,10 +375,18 @@ def run_pipeline(
         )
         notifications = notify_all(notifiers, report)
 
-    return {
+    result: dict[str, Any] = {
         "pipeline": pipeline_key,
         "dry_run": dry_run,
+        "persistence": persistence,
+        "store": receipt,
         "manifest": manifest,
         "stored": stored,
         "notifications": notifications,
     }
+    if journaled:
+        result["journal"] = journaled
+        result["next_step"] = "jobtracker sync-pending-runs once the database is reachable"
+    if pruned is not None:
+        result["pruned"] = pruned
+    return result

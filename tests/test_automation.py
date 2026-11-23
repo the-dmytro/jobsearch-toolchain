@@ -462,3 +462,70 @@ class RunPipelineTests(ScaffoldedRootTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _portability_db_reachable() -> bool:
+    if not os.getenv("SUPABASE_TEST_DB_URL"):
+        return False
+    try:
+        from jobtracker.db import connect_test
+
+        with connect_test() as conn, conn.cursor() as cur:
+            cur.execute("select 1")
+        return True
+    except Exception:
+        return False
+
+
+class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
+    """A run either lands in the shared store and is verified, or says pending_sync."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.scaffold()
+        self.write_profile_documents()
+        config_path = self.root / "config/jobsearch.toml"
+        content = config_path.read_text(encoding="utf-8").replace(
+            'backend = "sqlite"', 'backend = "postgres"'
+        )
+        config_path.write_text(content, encoding="utf-8")
+
+    def test_unreachable_database_fails_loudly_without_journal_flag(self) -> None:
+        from jobtracker.db import MissingConfigurationError
+
+        env = {"JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1"}
+        with mock.patch.dict(os.environ, env):
+            with self.assertRaises(MissingConfigurationError):
+                run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
+            result = run_pipeline(
+                "jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW, journal_on_db_failure=True
+            )
+        self.assertEqual(result["persistence"], "pending_sync")
+        self.assertEqual(result["stored"], [])
+        self.assertEqual(result["manifest"]["db"]["status"], "unavailable")
+        self.assertEqual(len(result["journal"]), 1)
+        self.assertFalse((self.root / "outputs/jobsearch.sqlite3").exists())
+
+    @unittest.skipUnless(
+        _portability_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database"
+    )
+    def test_postgres_run_is_verified_and_prunes_intermediates(self) -> None:
+        from jobtracker.db import connect_test
+        from jobtracker.migrations import apply_migrations
+
+        bootstrap = REPO_ROOT / "db" / "ci" / "plain_postgres_bootstrap.sql"
+        with connect_test() as conn:
+            with conn.cursor() as cur:
+                cur.execute(bootstrap.read_text(encoding="utf-8"))
+            conn.commit()
+            apply_migrations(conn)
+        with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"]}):
+            result = run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
+        self.assertEqual(result["persistence"], "stored")
+        self.assertEqual(result["store"]["backend"], "postgres")
+        self.assertTrue(result["stored"][0]["verified"])
+        provider_run = result["manifest"]["provider_runs"][0]
+        self.assertFalse(Path(provider_run["payload_path"]).exists())
+        self.assertFalse(Path(provider_run["normalized_payload_path"]).exists())
+        self.assertTrue(Path(provider_run["deduped_payload_path"]).exists())
+        self.assertEqual(result["pruned"]["current_run"]["deleted"], 2)

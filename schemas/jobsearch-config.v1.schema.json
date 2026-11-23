@@ -21,7 +21,23 @@
         "backend": { "type": "string", "minLength": 1, "default": "sqlite" },
         "sqlite_path": { "type": "string", "minLength": 1, "default": "outputs/jobsearch.sqlite3" },
         "artifact_backend": { "type": "string", "minLength": 1, "default": "local" },
-        "artifact_local_path": { "type": "string", "minLength": 1, "default": "outputs/artifacts" }
+        "artifact_local_path": { "type": "string", "minLength": 1, "default": "outputs/artifacts" },
+        "required_backend": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Refuse to open any other store backend (no silent local fallback)."
+        },
+        "text_retention": {
+          "enum": ["shortlisted", "all", "none"],
+          "default": "shortlisted",
+          "description": "Which full job texts PostgreSQL keeps; others keep a hash and excerpt only."
+        },
+        "auto_prune": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a verified PostgreSQL write, delete local artifacts the database holds."
+        },
+        "prune_min_age_hours": { "type": "number", "minimum": 0, "default": 24 }
       },
       "additionalProperties": true
     },

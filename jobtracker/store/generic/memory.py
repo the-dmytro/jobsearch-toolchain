@@ -8,6 +8,12 @@ from ..base import DuplicateMatch, UpsertResult
 
 
 class MemoryJobStore:
+    backend = "memory"
+
+    def verify_run(self, run_key: str) -> dict[str, Any] | None:
+        run = self.runs.get(run_key)
+        return {"run_key": run_key, **run} if run is not None else None
+
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, Any]] = {}
         self._opportunities_by_run: dict[str, list[dict[str, Any]]] = {}

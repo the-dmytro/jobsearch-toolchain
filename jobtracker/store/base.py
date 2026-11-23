@@ -9,6 +9,8 @@ class UpsertResult:
     run_key: str
     opportunities: int
     evaluations: int
+    stored_texts: int = 0
+    report_document_id: str | None = None
 
 
 @dataclass(frozen=True)
