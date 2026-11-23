@@ -115,7 +115,7 @@ def _repository(root: Path) -> dict[str, Any]:
         except Exception as exc:
             info["config_error"] = str(exc)
             try:
-                import tomllib
+                from .app_config.loader import tomllib
 
                 raw = tomllib.loads(config_path.read_text(encoding="utf-8")).get("store") or {}
                 store = {key: raw.get(key) for key in ("backend", "hosting")}
