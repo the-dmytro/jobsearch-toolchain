@@ -1,0 +1,11 @@
+{
+  "_comment": "Reschedule or correct a managed event by re-applying its full spec: start from `jobtracker calendar export --key <key> > spec.json`, edit the fields that changed, set the evidence, then apply. For one-field changes `jobtracker calendar update` is shorter.",
+  "action": "upsert",
+  "key": "manual:<company-slug>:<stage>-<yyyy-mm-dd>",
+  "title": "Interview with <Company> - <stage>",
+  "start": "2030-01-16T10:00",
+  "end": "2030-01-16T10:45",
+  "timezone": "Europe/London",
+  "timezone_confirmed": true,
+  "source": {"type": "email", "evidence": "imap://<folder>/<uid>"}
+}

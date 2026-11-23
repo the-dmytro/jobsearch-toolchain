@@ -1,0 +1,20 @@
+{
+  "_comment": "Manual event from a text-only e-mail (no .ics). Copy, fill, then run `jobtracker calendar apply <file>`. Remove fields you do not need; keep the key stable so later updates match.",
+  "action": "upsert",
+  "key": "manual:<company-slug>:<stage>-<yyyy-mm-dd>",
+  "title": "Interview with <Company> - <stage>",
+  "start": "2030-01-15T15:30",
+  "end": "2030-01-15T16:15",
+  "timezone": "Europe/London",
+  "timezone_confirmed": false,
+  "all_day": false,
+  "location": "",
+  "meeting_url": "https://meet.google.com/abc-defg-hij",
+  "organizer": "<Recruiter name> <recruiter@company.example>",
+  "participants": ["<Interviewer name>, <role>"],
+  "notes": "<What the e-mail says: stage, preparation, who calls whom.>",
+  "status": "confirmed",
+  "alarms_minutes": [60, 15],
+  "source": {"type": "email", "evidence": "imap://<folder>/<uid>"},
+  "jobsearch": {"application_id": "<id or omit>", "interview_id": "<id or omit>"}
+}

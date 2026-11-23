@@ -7,4 +7,5 @@ All plugin entry points use [`ConnectorBuildContext`](../contracts/connector-api
 - [Store connector](writing-a-store.md)
 - [Database connector (how a store reaches its database)](writing-a-database-connector.md)
 - [Notifier connector](writing-a-notifier.md)
+- [Calendar connector](writing-a-calendar-connector.md)
 - [Installable fixture package](../../examples/plugins/fixture-connectors/README.md)
