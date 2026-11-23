@@ -8,13 +8,14 @@ Choose the smallest path that matches the setup. The standard path is Python plu
 2. [Private profile and configuration](onboarding/PRIVATE_DATA.md)
 3. [Search sources](onboarding/SEARCH_SOURCES.md)
 4. [Email](onboarding/EMAIL.md)
-5. [Local storage](onboarding/STORAGE.md)
-6. [Optional PostgreSQL and Supabase](DB/SUPABASE_JOB_TRACKER.md) and [shared store across environments](DB/SHARED_STORE.md)
-7. [Optional CRM and analytics](onboarding/CRM_ANALYTICS.md)
-8. [Notifications and automation](onboarding/AUTOMATION.md)
-9. [Environment setup](onboarding/ENVIRONMENT_SETUP.md)
-10. [Troubleshooting](onboarding/TROUBLESHOOTING.md)
-11. [Privacy model](onboarding/PRIVACY.md)
+5. [Optional interview calendar](onboarding/CALENDAR.md)
+6. [Local storage](onboarding/STORAGE.md)
+7. [Optional PostgreSQL and Supabase](DB/SUPABASE_JOB_TRACKER.md) and [shared store across environments](DB/SHARED_STORE.md)
+8. [Optional CRM and analytics](onboarding/CRM_ANALYTICS.md)
+9. [Notifications and automation](onboarding/AUTOMATION.md)
+10. [Environment setup](onboarding/ENVIRONMENT_SETUP.md)
+11. [Troubleshooting](onboarding/TROUBLESHOOTING.md)
+12. [Privacy model](onboarding/PRIVACY.md)
 
 For an interactive setup, ask an agent to follow [AGENT_KICKSTART.md](onboarding/AGENT_KICKSTART.md).
 

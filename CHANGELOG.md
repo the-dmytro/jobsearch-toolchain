@@ -32,6 +32,7 @@ All notable changes use semantic versions. The project is distributed from signe
 
 ### Added
 
+- Optional calendar connector: `jobtracker calendar` subcommands, iCalendar/iTIP parsing, CalDAV and offline `icsdir` backends, the `jobtracker.calendars` entry-point group, and the `[calendar]` config table (backward-compatible CFG-V1 and CONNECTOR-V1 amendments).
 - Frozen v1 schemas for config, profile, automation payload, and doctor reports.
 - Connector build context and factory entry points for sources, mail, stores, and notifiers.
 - Local-first SQLite store, schema tracking, idempotent run replay, and PostgreSQL payload sync.

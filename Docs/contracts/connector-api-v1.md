@@ -30,6 +30,7 @@ Secrets are read from documented environment variables by the connector. They mu
 | `jobtracker.mail.senders` | Outbound mail sender | `MailSender` |
 | `jobtracker.stores` | Job data store | `JobStore` |
 | `jobtracker.notifiers` | Run notifier | `Notifier` |
+| `jobtracker.calendars` | Calendar backend | `CalendarBackend` (amendment 1) |
 
 Built-ins take precedence over a plugin with the same normalized slug. Unknown slugs fail with an error that lists available connectors. A plugin load failure is reported by `doctor`; it must not expose secrets.
 
@@ -79,6 +80,26 @@ slug: str
 notify(report: RunReport) -> dict[str, Any]
 health() -> list[str]
 ```
+
+### CalendarBackend (amendment 1)
+
+```python
+slug: str
+calendars() -> list[CalendarInfo]
+object_url(calendar_url: str, uid: str) -> str
+get(url: str) -> CalendarObject | None
+by_range(calendar_url: str, start: datetime, end: datetime) -> list[CalendarObject]
+all_events(calendar_url: str) -> list[CalendarObject]
+put(url: str, ics: str, etag: str | None) -> int
+delete(url: str, etag: str | None) -> None
+health() -> list[str]
+```
+
+Optional: `calendar_url(name) -> str` and `by_uid(calendar_url, uid, around) -> list[CalendarObject]`. `put` treats `etag` as `If-Match` and `None` as create-only. The host owns iTIP classification, time zones, the `X-JOBSEARCH-KEY` managed marker, stale-update checks, and read-back verification; written events never carry `ORGANIZER` or `ATTENDEE`. See the [calendar connector guide](../connectors/writing-a-calendar-connector.md).
+
+## Amendments
+
+1. v0.2 (backward compatible): adds the optional `jobtracker.calendars` group and the `CalendarBackend` protocol. Existing groups and signatures are unchanged.
 
 ## Change control
 

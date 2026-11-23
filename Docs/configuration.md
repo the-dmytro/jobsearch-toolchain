@@ -12,6 +12,7 @@ Relative paths are always resolved from `--root` or the selected project root, n
 - `[sources.<slug>]`
 - `[mail]`
 - `[notify.<slug>]`
+- `[calendar]`
 - `[pipelines.<name>]`
 
 Machine-readable rules are in [`schemas/jobsearch-config.v1.schema.json`](../schemas/jobsearch-config.v1.schema.json). Configs without `schema_version` remain readable with a deprecation warning through v0.2.
@@ -60,6 +61,38 @@ detail_limit = 10
 ```
 
 Fetch it with `jobtracker fetch-source example_jsonld`. See [connector guides](connectors/README.md) for in-tree and plugin alternatives.
+
+## Calendar
+
+```toml
+[calendar]
+kind = "caldav"
+url = "https://caldav.example.com/"
+calendar = "Interviews"
+default_timezone = "UTC"
+alarms_minutes = [60, 15]
+cancel_prefix = "Cancelled: "
+user_env = "JOBTRACKER_CALDAV_USER"
+password_env = "JOBTRACKER_CALDAV_PASSWORD"
+self_emails_env = "JOBTRACKER_CALENDAR_SELF_EMAILS"
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `kind` | `caldav` | `caldav`, `icsdir`, or a `jobtracker.calendars` plugin slug |
+| `url` | none | CalDAV discovery root (required for `caldav` unless `calendar_url` is set) |
+| `calendar_url` | none | Direct calendar collection URL; skips discovery |
+| `path` | `outputs/calendar` | Root-relative folder for `icsdir` |
+| `calendar` | `Interviews` | Calendar name; `--calendar` overrides it |
+| `default_timezone` | `UTC` | Display zone, and the zone assumed for floating or unknown times |
+| `alarms_minutes` | `[60, 15]` | Reminders before start; cancelled events have none |
+| `cancel_prefix` | `Cancelled: ` | Title prefix for cancelled events |
+| `user_env`, `password_env` | `JOBTRACKER_CALDAV_USER`, `JOBTRACKER_CALDAV_PASSWORD` | Environment variables that hold the credentials |
+| `self_emails_env` | `JOBTRACKER_CALENDAR_SELF_EMAILS` | Environment variable that lists your own addresses |
+| `timeout_seconds` | `60` | HTTP timeout for CalDAV |
+| `[calendar.text_rules]` | none | Extra regular expressions per text-only action, for other languages |
+
+Literal `user`, `password`, or `token` keys are rejected. See [Calendar](onboarding/CALENDAR.md).
 
 ## Secrets
 

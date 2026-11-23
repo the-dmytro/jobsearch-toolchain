@@ -62,6 +62,7 @@ the v0.2 compatibility window.
 | Mail sender | SMTP | `jobtracker.mail.senders` |
 | Store | SQLite, PostgreSQL, memory | `jobtracker.stores` |
 | Notifier | Email/webhook/Slack/Telegram | `jobtracker.notifiers` |
+| Calendar | `[calendar] kind = "caldav"` or `"icsdir"` | `jobtracker.calendars` |
 
 See the [connector contract](contracts/connector-api-v1.md) and the installable
 [fixture plugin](../examples/plugins/fixture-connectors/README.md).
