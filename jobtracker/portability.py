@@ -1,8 +1,8 @@
-"""Explicit offline journal, replay selection and post-run cleanup.
+"""Replay selection and post-run cleanup.
 
 Rules:
-- A write either lands in the configured shared store and is read back, or it is
-  reported as ``pending_sync`` with a non-zero exit code. No silent local success.
+- Every write goes to the store named in config and is read back; a failure is an
+  error. There is no alternative destination.
 - Local artifacts are removed only after the database holds their content.
 """
 
@@ -14,13 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from .app_config.loader import AppConfig
-from .automation_state import AutomationStateStore
 from .retention import apply_prune, candidate_files, classify, plan_prune, summarize
 from .store.registry import canonical_backend
 from .utils import normalize_space
 
 DEFAULT_STATE_DB = Path("outputs/automation-state/state.sqlite")
-PENDING_SYNC_EXIT_CODE = 3
 KIND_PRIORITY = {"evaluated": 0, "deduped": 1, "raw": 2, "normalized": 3}
 
 
@@ -36,24 +34,8 @@ def payload_run_key(payload: dict[str, Any]) -> str | None:
     )
 
 
-def journal_pending(
-    state_db: Path, provider: str, payload_path: Path, error: str, run_key: str | None = None
-) -> dict[str, Any]:
-    if not run_key:
-        payload = json.loads(payload_path.read_text(encoding="utf-8"))
-        run_key = payload_run_key(payload)
-    if not run_key:
-        raise ValueError(f"Cannot journal {payload_path}: payload has no run.run_key")
-    state = AutomationStateStore(state_db)
-    state.mark_run_sync_attempt(provider, run_key, str(payload_path), error=error)
-    state.record_run_event(
-        provider, run_key, "db_unavailable_journaled", error, {"payload_path": str(payload_path)}
-    )
-    return {"run_key": run_key, "provider": provider, "payload_path": str(payload_path)}
-
-
-def choose_replay_files(paths: list[Path], journal: dict[str, str]) -> dict[str, Path]:
-    """Pick one payload per run_key: the journaled file, else the most final variant."""
+def choose_replay_files(paths: list[Path]) -> dict[str, Path]:
+    """Pick one payload per run_key: the most final variant (evaluated, deduped, raw, normalized)."""
     grouped: dict[str, list[Path]] = {}
     for path in paths:
         try:
@@ -63,18 +45,8 @@ def choose_replay_files(paths: list[Path], journal: dict[str, str]) -> dict[str,
         run_key = payload_run_key(payload) if isinstance(payload, dict) else None
         if run_key:
             grouped.setdefault(run_key, []).append(path)
-    for run_key, journal_path in journal.items():
-        path = Path(journal_path)
-        if path.exists():
-            grouped.setdefault(run_key, [])
-            if path not in grouped[run_key]:
-                grouped[run_key].append(path)
     chosen: dict[str, Path] = {}
     for run_key, candidates in grouped.items():
-        journaled = journal.get(run_key)
-        if journaled and Path(journaled).exists():
-            chosen[run_key] = Path(journaled)
-            continue
         candidates.sort(key=lambda item: (KIND_PRIORITY.get(classify(item), 9), -item.stat().st_mtime))
         chosen[run_key] = candidates[0]
     return chosen

@@ -58,6 +58,13 @@ class CliTestCase(unittest.TestCase):
         self.addCleanup(self._temp.cleanup)
         self.root = Path(self._temp.name)
 
+    def write_store_config(self, backend: str) -> None:
+        transport = '\ntransport = "direct"' if backend == "postgres" else ""
+        (self.root / "config").mkdir(exist_ok=True)
+        (self.root / "config/jobsearch.toml").write_text(
+            f'schema_version = 1\n[store]\nbackend = "{backend}"{transport}\n', encoding="utf-8"
+        )
+
 
 class ArgumentParsingTests(unittest.TestCase):
     def test_parser_wires_every_subcommand_to_a_handler(self) -> None:
@@ -500,6 +507,7 @@ class PayloadCommandTests(CliTestCase):
 
     def test_sync_pending_runs_on_an_empty_directory(self) -> None:
         (self.root / "empty").mkdir()
+        self.write_store_config("postgres")
 
         exit_code, payload = run_command(
             jobtracker_cli.cmd_sync_pending_runs,
@@ -508,10 +516,25 @@ class PayloadCommandTests(CliTestCase):
             state_db=str(self.root / "state.sqlite"),
             dry_run=False,
             keep_going=False,
+            root=str(self.root),
         )
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["synced"], 0)
+
+    def test_sync_pending_runs_refuses_a_store_other_than_the_target(self) -> None:
+        self.write_store_config("sqlite")
+        with self.assertRaises(jobtracker_cli.MissingConfigurationError):
+            run_command(
+                jobtracker_cli.cmd_sync_pending_runs,
+                payload_dir=str(self.root),
+                provider=None,
+                state_db=str(self.root / "state.sqlite"),
+                dry_run=False,
+                keep_going=False,
+                target_store="postgres",
+                root=str(self.root),
+            )
 
     def test_sync_pending_runs_uses_the_selected_target_store(self) -> None:
         payload_dir = self.root / "payloads"
@@ -520,6 +543,7 @@ class PayloadCommandTests(CliTestCase):
             {"run": {"run_key": "example-2026-04-29"}, "opportunities": []},
         )
         memory = MemoryJobStore()
+        self.write_store_config("postgres")
 
         @contextlib.contextmanager
         def fake_store(options, *, root):
@@ -617,7 +641,10 @@ provider_slug = "example"
             "body_file": str(body_file),
             "idempotency_key": None,
             "state_db": str(state_db),
+            "root": str(self.root),
+            "config": None,
         }
+        self.write_store_config("sqlite")
         sender = mock.Mock()
         sender.default_sender = "robot@example.com"
         sender.send.return_value = SendReceipt(sent=True, recipient="me@example.com", subject="Upwork triage")

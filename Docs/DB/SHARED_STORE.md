@@ -5,39 +5,43 @@ cloud session, another coding agent). PostgreSQL then holds everything that othe
 environments need: runs, opportunity cards, evaluations, applications, automation
 state, and documents. Local files are temporary.
 
-## Explicit persistence
+## One store, no fallback
 
-Every write reports where it went and whether it was read back:
+`[store].backend` is required and is the only database the project uses:
+
+- `"sqlite"`: everything stays in the local SQLite file. Not shared.
+- `"postgres"`: everything goes to one PostgreSQL database. `transport` is required:
+  `"direct"` (PostgreSQL protocol, `JOBTRACKER_DATABASE_URL`) or `"supabase_https"`
+  (Supabase Data API over HTTPS, `SUPABASE_URL` + `SUPABASE_SECRET_KEY`; works behind
+  HTTP-only proxies, see [cloud environments](../onboarding/CLOUD_ENVIRONMENT.md)).
+
+If the configured store is unreachable, the command fails (exit code 2). Nothing is
+written to another store, and no command switches stores or transports by itself.
+Every write prints a receipt and is read back:
 
 ```json
-{"persistence": "stored", "store": {"backend": "postgres", "target": "db.host.example", "shared": true}, "verified": true}
+{"persistence": "stored", "store": {"backend": "postgres", "transport": "supabase_https", "target": "ref.supabase.co", "shared": true}, "verified": true}
 ```
-
-There is no silent local fallback:
-
-- Set `required_backend = "postgres"` in `[store]` (or `JOBTRACKER_REQUIRED_STORE=postgres`
-  in the environment). Any command that would open another store backend fails.
-- If PostgreSQL is unreachable, writes fail with exit code 2. Only an explicit
-  `--journal-on-db-failure` flag (`run`, `upsert-run`) keeps the payload in the local
-  journal, prints `"persistence": "pending_sync"` and exits with code 3.
-- `doctor` lists journaled runs under `checks.pending_sync` and reports
-  `action_required` until `sync-pending-runs` has replayed and verified them.
 
 ```toml
 [store]
 backend = "postgres"
-required_backend = "postgres"
-text_retention = "shortlisted"   # shortlisted | all | none
+transport = "supabase_https"   # or "direct"
+text_retention = "shortlisted" # shortlisted | all | none
 auto_prune = true
 prune_min_age_hours = 24
 ```
 
+Over `supabase_https` each statement commits on its own. Writes are idempotent and
+read back, so if a command fails midway it exits non-zero and rerunning it completes
+the write.
+
 ## Shared automation state
 
-`fetch-mail-folder` and `send-report-email` take `--state-backend auto|sqlite|postgres`.
-`auto` follows `[store].backend`, so with PostgreSQL every environment sees which
-messages were already processed and which reports were already sent
-(`source_items` processing columns, `email_notifications`, `automation_run_events`).
+`fetch-mail-folder` and `send-report-email` keep their state in the configured store.
+With PostgreSQL every environment sees which messages were already processed and which
+reports were already sent (`source_items` processing columns, `email_notifications`,
+`automation_run_events`). Both commands require `config/jobsearch.toml`.
 Message bodies are not stored in this state; only a SHA-256 is kept.
 
 ## What PostgreSQL keeps
@@ -48,7 +52,7 @@ Message bodies are not stored in this state; only a SHA-256 is kept.
 | Full job text | `opportunity_texts`, only when `text_retention` selects it (`shortlisted`: application, or an evaluation that recommends applying or shortlisting) |
 | Source items | Columns, `body_sha256` and compact facts; `raw_text` only with `text_retention = "all"` |
 | Run | Counters, status, `metadata.payload_sha256` of the payload file; no full payload copy |
-| Report passed to `upsert-run --report` | `documents(kind = 'report')` plus the Storage artifact when configured |
+| Report passed to `upsert-run --report` | `documents(kind = 'report')`; also uploaded when `artifact_backend` is `supabase`/`s3` (a failed upload is an error) |
 | Drafts, cover letters, proposals, notes | `documents` via `documents put` |
 
 Earlier versions stored a full payload copy in `metadata.payload` of every row.
@@ -118,9 +122,17 @@ Everything else is kept with a reason. Pruning is refused when the store is not
 PostgreSQL. After a verified `run`, `auto_prune` deletes that run's raw and normalized
 payloads immediately and prunes older verified rounds.
 
-## Replay
+## Dedupe
 
-`sync-pending-runs` replays one file per `run_key`: the journaled file, otherwise the
-most final variant (evaluated, then deduped, raw, normalized). It skips a file that
+With PostgreSQL, duplicates are decided by the database only, so every environment
+gets the same answer. Local payload history is a dedupe source only for the SQLite
+store.
+
+## Replay of local artifacts
+
+`sync-pending-runs` moves retained local payloads into the configured PostgreSQL store
+(for example after switching from SQLite). It refuses to run unless the config names
+PostgreSQL. It replays one file per `run_key`, the most final variant (evaluated, then
+deduped, raw, normalized). It skips a file that
 is identical to the stored run. It refuses to overwrite a stored run that has more
 evaluations than the local file; `--overwrite-richer` overrides this.

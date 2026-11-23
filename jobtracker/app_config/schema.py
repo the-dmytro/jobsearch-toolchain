@@ -18,6 +18,9 @@ def _require_mapping(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
+POSTGRES_TRANSPORTS = ("direct", "supabase_https")
+
+
 def _require_str(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigValidationError(f"{path} must be a non-empty string")
@@ -79,7 +82,14 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
         notify[str(channel).strip().lower()] = _require_mapping(channel_config, f"notify.{channel}")
 
     store_raw = _require_mapping(root.get("store", {}), "store")
-    backend = _require_str(store_raw.get("backend", "sqlite"), "store.backend").lower()
+    if "backend" not in store_raw:
+        raise ConfigValidationError(
+            'store.backend is required: choose "sqlite" (local file) or "postgres" (shared database). '
+            "There is no default and no fallback between them."
+        )
+    backend = _require_str(store_raw.get("backend"), "store.backend").lower()
+    if backend in {"postgresql", "supabase"}:
+        backend = "postgres"
     store = dict(store_raw)
     store.update(
         {
@@ -92,9 +102,21 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
         }
     )
     if "required_backend" in store_raw:
-        store["required_backend"] = _require_str(
-            store_raw["required_backend"], "store.required_backend"
-        ).lower()
+        raise ConfigValidationError(
+            "store.required_backend was removed: store.backend is the only database choice."
+        )
+    if backend == "postgres":
+        if "transport" not in store_raw:
+            raise ConfigValidationError(
+                'store.transport is required for PostgreSQL: "direct" (PostgreSQL protocol, '
+                'JOBTRACKER_DATABASE_URL) or "supabase_https" (HTTPS, works behind HTTP-only proxies).'
+            )
+        transport = _require_str(store_raw["transport"], "store.transport").lower()
+        if transport not in POSTGRES_TRANSPORTS:
+            raise ConfigValidationError(f"store.transport must be one of: {', '.join(POSTGRES_TRANSPORTS)}")
+        store["transport"] = transport
+    elif "transport" in store_raw:
+        raise ConfigValidationError('store.transport applies only to store.backend = "postgres"')
     if "text_retention" in store_raw:
         from ..store.compact import normalize_text_retention
 

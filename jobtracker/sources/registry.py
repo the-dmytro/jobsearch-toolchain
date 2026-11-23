@@ -54,15 +54,28 @@ def register_source(cls: T) -> T:
     return cls
 
 
-def _load_targets(path: str | Path | None = None, *, root: Path | None = None) -> dict[str, Any]:
+def _load_targets(
+    path: str | Path | None = None, *, root: Path | None = None, fixture_mode: bool = False
+) -> dict[str, Any]:
+    """Load provider targets from an explicit path or the selected root's profile.
+
+    Bundled fixture targets are used only in fixture mode; a missing private targets
+    file is an error, never silently replaced by example companies.
+    """
     selected = path or os.getenv("JOBTRACKER_PROVIDER_TARGETS")
     if selected:
         target_path = Path(selected)
         if root and not target_path.is_absolute():
             target_path = root / target_path
     else:
-        rooted = (root / "profile/provider_targets.toml") if root else None
-        target_path = rooted if rooted and rooted.exists() else TARGETS_PATH
+        target_path = (root or _REPO_ROOT) / "profile/provider_targets.toml"
+        if not target_path.exists():
+            if not fixture_mode:
+                raise ValueError(
+                    f"Provider targets not found at {target_path}. Create it from "
+                    "profile/templates/generic/provider_targets.toml or pass --targets."
+                )
+            target_path = _FIXTURE_TARGETS
     return tomllib.loads(target_path.read_text(encoding="utf-8"))
 
 
@@ -201,7 +214,7 @@ def collect_provider_run(
 ) -> CollectionResult:
     provider_slug = slugify(provider_slug)
     project_root = Path(root) if root else None
-    targets = _load_targets(targets_path, root=project_root)
+    targets = _load_targets(targets_path, root=project_root, fixture_mode=fixture_dir is not None)
     connectors = _load_jobsearch_sources(config_path=config_path, root=project_root)
     source_config = dict(connectors.get(provider_slug) or {})
     metrics = FetchMetrics()

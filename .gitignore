@@ -20,6 +20,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+.coverage
+*.egg-info/
 
 # Next.js CRM
 crm/.next/

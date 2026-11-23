@@ -49,11 +49,16 @@ class ConnectorFactoryTests(unittest.TestCase):
 
 
 class StoreFactoryTests(unittest.TestCase):
-    def test_default_store_is_root_relative_sqlite(self) -> None:
+    def test_sqlite_store_is_root_relative_and_must_be_chosen(self) -> None:
+        from jobtracker.db import MissingConfigurationError
+
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
 
-            with open_job_store({}, root=root) as store:
+            with self.assertRaises(MissingConfigurationError):
+                with open_job_store({}, root=root):
+                    pass
+            with open_job_store({"backend": "sqlite"}, root=root) as store:
                 self.assertIsInstance(store, SqliteJobStore)
 
             self.assertTrue((root / "outputs/jobsearch.sqlite3").exists())

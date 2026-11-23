@@ -10,7 +10,6 @@ from typing import Any
 
 from .app_config.profiles import JobboardProfile, load_profile
 from .config import load_env_file
-from .db import connect
 from .dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
 from .provider_fetch import collect_provider_run
 from .store.base import JobStore
@@ -90,13 +89,13 @@ def _store_dedupe(
     return apply_db_dedupe_matches(payload, matches_by_external_id, exclude_run_keys=[run_key])
 
 
-def _connect_for_prepare(stack: ExitStack, include_db: bool) -> tuple[Any | None, dict[str, Any]]:
-    if not include_db:
-        return None, {"status": "skipped", "reason": "--no-db"}
-    try:
-        return stack.enter_context(connect()), {"status": "available"}
-    except Exception as exc:
-        return None, {"status": "unavailable", "error": str(exc)}
+def _uses_local_index(store: JobStore | None) -> bool:
+    """Local payload history is a dedupe source only when the store itself is local.
+
+    With the shared PostgreSQL store, duplicates are decided by the database alone so
+    every environment gets the same answer.
+    """
+    return getattr(store, "backend", None) != "postgres"
 
 
 def prepare_jobboard_run(
@@ -137,12 +136,14 @@ def prepare_jobboard_run(
 
     provider_runs: list[dict[str, Any]] = []
     overall_status = "completed"
-    with ExitStack() as stack:
+    with ExitStack():
         conn = getattr(store, "conn", None) if store is not None else None
         if store is not None:
-            db_status = {"status": "available", "backend": type(store).__name__}
+            db_status = {"status": "available", "backend": getattr(store, "backend", type(store).__name__)}
         else:
-            conn, db_status = _connect_for_prepare(stack, include_db)
+            if include_db:
+                raise ValueError("include_db requires the configured store; open it with open_job_store")
+            db_status = {"status": "skipped", "reason": "--no-db"}
         for provider in provider_list:
             provider_slug = normalize_space(provider).lower()
             paths = _payload_paths(output_root, date_slug, profile.output_slug, provider_slug)
@@ -168,13 +169,16 @@ def prepare_jobboard_run(
                 raise ValueError(f"{provider_slug} payload validation failed: {'; '.join(validation.errors)}")
             _write_payload(paths["normalized"], validation.normalized)
 
-            index = LocalDedupeIndex.from_payload_dir(
-                payload_root,
-                now=started_at,
-                exclude_paths=[paths["payload"], paths["normalized"], paths["deduped"]],
-                exclude_run_keys=[result.run_key],
-            )
-            deduped = dedupe_payload(validation.normalized, provider=provider_slug, index=index)
+            if _uses_local_index(store):
+                index = LocalDedupeIndex.from_payload_dir(
+                    payload_root,
+                    now=started_at,
+                    exclude_paths=[paths["payload"], paths["normalized"], paths["deduped"]],
+                    exclude_run_keys=[result.run_key],
+                )
+                deduped = dedupe_payload(validation.normalized, provider=provider_slug, index=index)
+            else:
+                deduped = copy.deepcopy(validation.normalized)
             deduped = _store_dedupe(deduped, provider_slug, store, result.run_key)
             _write_payload(paths["deduped"], deduped)
 
@@ -195,9 +199,6 @@ def prepare_jobboard_run(
                     "metrics": result.metrics.to_dict(result.status),
                 }
             )
-
-    if db_status["status"] == "unavailable":
-        overall_status = "partial"
 
     finished_at = _as_utc(now)
     report_path_value = Path(profile.report_path_template.format(date=date_slug))
@@ -233,8 +234,8 @@ def prepare_jobboard_run(
         "deterministic_steps_completed": [
             "provider listing/detail fetch",
             "payload validation and normalization",
-            "local fallback dedupe enrichment",
-            "DB duplicate enrichment when available",
+            "local payload-history dedupe (local stores only)",
+            "configured-store duplicate check",
             "manifest and payload artifact writing",
         ],
         "llm_steps_remaining": [

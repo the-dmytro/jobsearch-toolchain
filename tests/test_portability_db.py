@@ -204,7 +204,8 @@ class PortabilityDbTests(unittest.TestCase):
     def test_cli_documents_prune_and_compact(self) -> None:
         (self.root / "config").mkdir()
         (self.root / "config/jobsearch.toml").write_text(
-            'schema_version = 1\n[store]\nbackend = "postgres"\nprune_min_age_hours = 0\n', encoding="utf-8"
+            'schema_version = 1\n[store]\nbackend = "postgres"\ntransport = "direct"\nprune_min_age_hours = 0\n',
+            encoding="utf-8",
         )
         note = self.root / "notes/company.md"
         note.parent.mkdir()

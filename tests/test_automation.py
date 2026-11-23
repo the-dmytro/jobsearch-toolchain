@@ -284,8 +284,10 @@ class ConnectivityCheckTests(unittest.TestCase):
             )
 
     def test_database_check_wraps_connection_errors(self) -> None:
+        from jobtracker.store import registry as store_registry
+
         with mock.patch.object(automation, "load_settings", return_value=settings(db_url="postgres://x")):
-            with mock.patch.object(automation, "connect", side_effect=RuntimeError("connection refused")):
+            with mock.patch.object(store_registry, "connect", side_effect=RuntimeError("connection refused")):
                 issues = check_db_connectivity()
 
         self.assertEqual(issues, ["database: connection refused"])
@@ -486,25 +488,19 @@ class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
         self.write_profile_documents()
         config_path = self.root / "config/jobsearch.toml"
         content = config_path.read_text(encoding="utf-8").replace(
-            'backend = "sqlite"', 'backend = "postgres"'
+            'backend = "sqlite"', 'backend = "postgres"\ntransport = "direct"'
         )
         config_path.write_text(content, encoding="utf-8")
 
-    def test_unreachable_database_fails_loudly_without_journal_flag(self) -> None:
+    def test_unreachable_database_is_an_error_with_no_local_copy(self) -> None:
         from jobtracker.db import MissingConfigurationError
 
         env = {"JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1"}
         with mock.patch.dict(os.environ, env):
             with self.assertRaises(MissingConfigurationError):
                 run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
-            result = run_pipeline(
-                "jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW, journal_on_db_failure=True
-            )
-        self.assertEqual(result["persistence"], "pending_sync")
-        self.assertEqual(result["stored"], [])
-        self.assertEqual(result["manifest"]["db"]["status"], "unavailable")
-        self.assertEqual(len(result["journal"]), 1)
         self.assertFalse((self.root / "outputs/jobsearch.sqlite3").exists())
+        self.assertFalse((self.root / "outputs/automation-state").exists())
 
     @unittest.skipUnless(
         _portability_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database"
