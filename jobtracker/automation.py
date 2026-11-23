@@ -27,37 +27,13 @@ PROFILE_TEMPLATE_DIR = Path("profile/templates/generic")
 
 
 CONFIG_TEMPLATES = {
-    "local": EXAMPLE_CONFIG_PATH,
+    "sqlite": EXAMPLE_CONFIG_PATH,
     "shared": Path("config/jobsearch.shared.example.toml"),
 }
 
 
-def scaffold_environment(
-    *, root: Path, environment: str, connector: str, hosting: str | None = None, force: bool = False
-) -> str:
-    """Write config/environments/<environment>.toml selecting exactly one connector."""
-    from .store.connectors import get_connector
-
-    info = get_connector(connector).info
-    if hosting and info.hosting not in {"any", hosting}:
-        raise ValueError(f"connector {connector!r} works only with {info.hosting!r} hosting, not {hosting!r}")
-    if not environment.replace("-", "").replace("_", "").isalnum():
-        raise ValueError(f"environment must be a simple name, got {environment!r}")
-    path = root / "config" / "environments" / f"{environment}.toml"
-    if path.exists() and not force:
-        raise FileExistsError(f"{path} exists; pass --force to replace it")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    needs = ", ".join(info.settings)
-    path.write_text(
-        f"# Environment {environment!r}: select it with JOBTRACKER_ENVIRONMENT={environment}.\n"
-        f'# {info.description}\n# Needs: {needs}\n[store]\nconnector = "{info.name}"\n',
-        encoding="utf-8",
-    )
-    return str(path)
-
-
 def scaffold_config(
-    *, root: Path | None = None, force: bool = False, template: str = "local"
+    *, root: Path | None = None, force: bool = False, template: str = "sqlite"
 ) -> dict[str, Any]:
     project_root = root or Path.cwd()
     config_dir = project_root / "config"

@@ -19,32 +19,25 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .app_config.loader import (
-    DEFAULT_CONFIG_PATH,
-    ENVIRONMENT_ENV,
-    environment_files,
-    load_app_config,
-)
+from .app_config.loader import DEFAULT_CONFIG_PATH, STORE_CONNECTOR_ENV, load_app_config
 from .config import load_env_file, load_settings
 from .store.connectors import list_connectors
 
 PROBE_SCHEMA = "jobtracker-environment-probe/v1"
+SETUP_NOTES_PATH = Path("config/setup-notes.md")
 SUPABASE_HOST_MARKERS = (".supabase.co", ".supabase.com")
 
 
-def _platform_hints() -> list[str]:
-    hints: list[str] = []
-    if os.getenv("CLAUDE_CODE_REMOTE") or any(key.startswith("CCR_") for key in os.environ):
-        hints.append("claude_code_cloud")
-    elif os.getenv("CLAUDECODE"):
-        hints.append("claude_code_local")
-    if any(key.startswith("CODEX") for key in os.environ):
-        hints.append("codex")
-    if os.getenv("GITHUB_ACTIONS"):
-        hints.append("github_actions")
-    if os.getenv("CODESPACES"):
-        hints.append("codespaces")
-    return hints or ["unknown"]
+def _runtime() -> dict[str, Any]:
+    """Capabilities of this process. No platform is identified: environments are open-ended."""
+    proxy_names = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
+    return {
+        "os": platform.platform(),
+        "python": sys.version.split()[0],
+        "psycopg_installed": _has_module("psycopg"),
+        "proxy_variables": sorted(name for name in proxy_names if os.getenv(name)),
+        "in_container": Path("/.dockerenv").exists() or Path("/run/.containerenv").exists(),
+    }
 
 
 def _tcp(host: str, port: int, timeout: float) -> dict[str, Any]:
@@ -94,9 +87,9 @@ def _repository(root: Path) -> dict[str, Any]:
     config_path = root / DEFAULT_CONFIG_PATH
     info: dict[str, Any] = {
         "config": config_path.exists(),
-        "environment_variable": ENVIRONMENT_ENV,
-        "selected_environment": (os.getenv(ENVIRONMENT_ENV) or "").strip() or None,
-        "environment_files": environment_files(config_path.parent),
+        "connector_variable": STORE_CONNECTOR_ENV,
+        "selected_connector": (os.getenv(STORE_CONNECTOR_ENV) or "").strip().lower() or None,
+        "setup_notes": (root / SETUP_NOTES_PATH).exists(),
         "provider_targets": (root / "profile/provider_targets.toml").exists(),
         "profile_files": sorted(path.name for path in (root / "profile").glob("*.md"))
         if (root / "profile").is_dir()
@@ -108,7 +101,7 @@ def _repository(root: Path) -> dict[str, Any]:
     if info["config"]:
         try:
             config = load_app_config(root=root)
-            store = {key: config.store.get(key) for key in ("backend", "connector", "hosting", "environment")}
+            store = {key: config.store.get(key) for key in ("backend", "connector", "hosting")}
             for source in config.source_configs.values():
                 for key in ("listing_url", "url", "feed_url", "base_url"):
                     value = source.get(key)
@@ -125,7 +118,8 @@ def _repository(root: Path) -> dict[str, Any]:
                 import tomllib
 
                 raw = tomllib.loads(config_path.read_text(encoding="utf-8")).get("store") or {}
-                store = {key: raw.get(key) for key in ("backend", "connector", "hosting")}
+                store = {key: raw.get(key) for key in ("backend", "hosting")}
+                store["connector"] = (os.getenv(STORE_CONNECTOR_ENV) or "").strip().lower() or None
             except Exception:
                 store = {}
     info["store"] = store
@@ -160,11 +154,10 @@ def probe_environment(root: Path, *, timeout: float = 5.0) -> dict[str, Any]:
             entry.update({key: result[key] for key in ("status", "evidence", "needs")})
             if info.hosting == "supabase":
                 entry["evidence"] = supabase_evidence + entry["evidence"]
-        entry["selected"] = store.get("connector") == info.name
+        entry["selected"] = (repository.get("selected_connector") or store.get("connector")) == info.name
         candidates.append(entry)
 
     network: dict[str, Any] = {
-        "http_proxy": bool(os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")),
         "https": [_https(url, timeout) for url in repository.get("source_urls", [])[:20]],
     }
     mail_hosts = []
@@ -179,12 +172,7 @@ def probe_environment(root: Path, *, timeout: float = 5.0) -> dict[str, Any]:
 
     return {
         "schema": PROBE_SCHEMA,
-        "platform": {
-            "hints": _platform_hints(),
-            "os": platform.platform(),
-            "python": sys.version.split()[0],
-            "psycopg_installed": _has_module("psycopg"),
-        },
+        "runtime": _runtime(),
         "repository": repository,
         "database": {
             "declared_backend": store.get("backend"),
@@ -195,8 +183,9 @@ def probe_environment(root: Path, *, timeout: float = 5.0) -> dict[str, Any]:
         "network": network,
         "not_visible_here": [
             "agent-side tools such as MCP connectors (check the agent's own tool list)",
-            "the platform's environment settings (network policy, secrets, setup script)",
+            "the platform's environment controls (network policy, variables, secrets, setup script)",
             "facts only the user knows: where the database is hosted, which credentials exist",
+            f"earlier findings recorded in {SETUP_NOTES_PATH} (read it)",
         ],
     }
 
@@ -209,12 +198,14 @@ def _has_module(name: str) -> bool:
 
 def format_probe(probe: dict[str, Any]) -> str:
     repo = probe["repository"]
+    runtime = probe["runtime"]
     store = repo.get("store") or {}
     lines = [
-        f"platform:    {', '.join(probe['platform']['hints'])} (HTTP proxy: {probe['network']['http_proxy']})",
-        f"setup state: {repo['setup_state']}  environment: {repo['selected_environment'] or '(not set)'}"
-        f"  available: {', '.join(repo['environment_files']) or '(none)'}",
-        f"store:       backend={store.get('backend')} connector={store.get('connector')} hosting={store.get('hosting')}",
+        f"runtime:     {runtime['os']} python {runtime['python']}  proxy variables: "
+        f"{', '.join(runtime['proxy_variables']) or 'none'}",
+        f"setup state: {repo['setup_state']}  setup notes: {'yes' if repo['setup_notes'] else 'no'}",
+        f"store:       backend={store.get('backend')} hosting={store.get('hosting')} "
+        f"connector={repo['selected_connector'] or '(' + repo['connector_variable'] + ' not set)'}",
     ]
     if repo.get("config_error"):
         lines.append(f"config:      {repo['config_error']}")

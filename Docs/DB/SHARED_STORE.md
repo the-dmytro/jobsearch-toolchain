@@ -1,7 +1,7 @@
 # Shared PostgreSQL store: continuity across environments
 
 Use this when the same job search runs on more than one machine or agent (a laptop, a
-cloud session, another coding agent). PostgreSQL then holds everything that other
+server, an agent sandbox). PostgreSQL then holds everything that other
 environments need: runs, opportunity cards, evaluations, applications, automation
 state, and documents. Local files are temporary.
 
@@ -11,9 +11,9 @@ state, and documents. Local files are temporary.
 
 - `"sqlite"`: everything stays in the local SQLite file. Not shared.
 - `"postgres"`: everything goes to one PostgreSQL database. Each environment reaches
-  it through exactly one **connector**, set in `config/environments/<environment>.toml`
-  and selected with `JOBTRACKER_ENVIRONMENT`. Built-in connectors: `postgres_direct`
-  (any host, PostgreSQL protocol, `JOBTRACKER_DATABASE_URL`) and `supabase_https`
+  it through exactly one **connector**, named by that environment's variable
+  `JOBTRACKER_STORE_CONNECTOR`. Built-in connectors: `postgres_direct` (any host,
+  PostgreSQL protocol, `JOBTRACKER_DATABASE_URL`) and `supabase_https`
   (Supabase-hosted only, HTTPS, `SUPABASE_URL` + `SUPABASE_SECRET_KEY`). See
   [environment setup](../onboarding/ENVIRONMENT_SETUP.md) and the
   [connector blueprint](../connectors/writing-a-database-connector.md).
@@ -23,25 +23,23 @@ another fails. If the configured store is unreachable, the command fails (exit c
 nothing is written anywhere else. Every write prints a receipt and is read back:
 
 ```json
-{"persistence": "stored", "store": {"backend": "postgres", "connector": "supabase_https", "target": "ref.supabase.co", "shared": true, "hosting": "supabase", "environment": "claude-code-cloud"}, "verified": true}
+{"persistence": "stored", "store": {"backend": "postgres", "connector": "supabase_https", "target": "ref.supabase.co", "shared": true, "hosting": "supabase", "selected_by": "JOBTRACKER_STORE_CONNECTOR"}, "verified": true}
 ```
 
 ```toml
-# config/jobsearch.toml (shared by every environment)
+# config/jobsearch.toml: the same in every environment
 [store]
 backend = "postgres"
 hosting = "supabase"           # only if known
 text_retention = "shortlisted" # shortlisted | all | none
 auto_prune = true
 prune_min_age_hours = 24
+```
 
-# config/environments/claude-code-cloud.toml
-[store]
-connector = "supabase_https"
-
-# config/environments/laptop.toml
-[store]
-connector = "postgres_direct"
+```text
+# each environment's own variables (settings or ignored .env)
+JOBTRACKER_STORE_CONNECTOR=postgres_direct     # e.g. where TCP to the database works
+JOBTRACKER_STORE_CONNECTOR=supabase_https      # e.g. where only HTTPS leaves the sandbox
 ```
 
 With `supabase_https` each statement commits on its own. Writes are idempotent and

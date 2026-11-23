@@ -71,12 +71,10 @@ Plugin package: expose an entry point.
 example_https = "example_connector:ExampleConnector"
 ```
 
-Select it per environment:
+Select it in each environment that should use it:
 
-```toml
-# config/environments/<environment>.toml
-[store]
-connector = "example_https"
+```text
+JOBTRACKER_STORE_CONNECTOR=example_https
 ```
 
 `[store] hosting` in the shared config must be unset, `any`-compatible, or equal to
@@ -89,7 +87,7 @@ the connector's `hosting`.
    it serves the connector's endpoint from a local test server backed by a real
    PostgreSQL test database and runs upsert, readback, documents, applications and
    automation state through the connection.
-3. `jobtracker doctor` with the environment selected.
+3. `jobtracker doctor` with `JOBTRACKER_STORE_CONNECTOR` set to your connector.
 
 ## Blueprints
 

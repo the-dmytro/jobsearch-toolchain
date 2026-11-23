@@ -50,8 +50,8 @@ def postgres_connector(options: dict[str, Any]) -> Any:
     name = normalize_space(str(options.get("connector") or "")).lower()
     if not name:
         raise MissingConfigurationError(
-            "store.connector is required for the PostgreSQL store (for example postgres_direct or "
-            "supabase_https). Set it in config/environments/<environment>.toml."
+            "No database connector selected: set JOBTRACKER_STORE_CONNECTOR in this environment "
+            "(for example postgres_direct or supabase_https)."
         )
     connector = get_connector(name)
     hosting = normalize_space(str(options.get("hosting") or "")).lower()
@@ -94,8 +94,8 @@ def describe_store(options: dict[str, Any], *, root: Path) -> dict[str, Any]:
         }
         if options.get("hosting"):
             receipt["hosting"] = options["hosting"]
-        if options.get("environment"):
-            receipt["environment"] = options["environment"]
+        if options.get("connector_source"):
+            receipt["selected_by"] = options["connector_source"]
         return receipt
     if backend == "memory":
         return {"backend": "memory", "target": "process memory", "shared": False}

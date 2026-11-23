@@ -104,17 +104,20 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
         )
     if "transport" in store_raw:
         raise ConfigValidationError(
-            "store.transport was renamed to store.connector (postgres_direct or supabase_https)."
+            "store.transport was removed: set JOBTRACKER_STORE_CONNECTOR (postgres_direct or supabase_https) "
+            "in each environment."
+        )
+    if "connector" in store_raw:
+        raise ConfigValidationError(
+            "store.connector is environment-specific and does not belong in the repository config; "
+            "set JOBTRACKER_STORE_CONNECTOR in each environment instead."
         )
     if backend == "postgres":
-        if "connector" in store_raw:
-            store["connector"] = _require_str(store_raw["connector"], "store.connector").lower()
         if "hosting" in store_raw:
             store["hosting"] = _require_str(store_raw["hosting"], "store.hosting").lower()
     else:
-        for key in ("connector", "hosting"):
-            if key in store_raw:
-                raise ConfigValidationError(f'store.{key} applies only to store.backend = "postgres"')
+        if "hosting" in store_raw:
+            raise ConfigValidationError('store.hosting applies only to store.backend = "postgres"')
     if "text_retention" in store_raw:
         from ..store.compact import normalize_text_retention
 

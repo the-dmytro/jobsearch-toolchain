@@ -1,10 +1,9 @@
 schema_version = 1
 
-# Shared-database template: every environment uses the same PostgreSQL database.
-# How each environment reaches it (the connector) lives in
-# config/environments/<environment>.toml, selected by JOBTRACKER_ENVIRONMENT.
-# `jobtracker init --template shared --environment <name> --connector <connector>`
-# writes both files. See Docs/onboarding/ENVIRONMENT_SETUP.md.
+# Shared-database template: several environments use the same PostgreSQL database.
+# This file stays environment-agnostic. Each environment selects how it reaches the
+# database with its own variable JOBTRACKER_STORE_CONNECTOR (for example
+# postgres_direct or supabase_https). See Docs/onboarding/ENVIRONMENT_SETUP.md.
 
 [paths]
 config_dir = "config"

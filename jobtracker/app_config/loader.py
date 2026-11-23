@@ -16,8 +16,7 @@ from .schema import ConfigValidationError, validate_jobsearch_config
 DEFAULT_CONFIG_PATH = Path("config/jobsearch.toml")
 EXAMPLE_CONFIG_PATH = Path("config/jobsearch.example.toml")
 LOCAL_CONFIG_SUFFIX = ".local.toml"
-ENVIRONMENT_ENV = "JOBTRACKER_ENVIRONMENT"
-ENVIRONMENTS_DIR = "environments"
+STORE_CONNECTOR_ENV = "JOBTRACKER_STORE_CONNECTOR"
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,6 @@ class AppConfig:
     pipelines: dict[str, dict[str, Any]]
     notify: dict[str, dict[str, Any]]
     sources: list[Path]
-    environment: str | None = None
 
     def resolve_path(self, value: str | Path) -> Path:
         path = Path(value).expanduser()
@@ -93,16 +91,13 @@ def load_app_config(
         raise ConfigValidationError(f"Config file not found: {primary}")
 
     merged = _load_toml(primary)
-    environment, environment_path = _selected_environment(primary.parent)
-    if environment_path is not None:
-        merged = _deep_merge(merged, _load_toml(environment_path))
     local_path = primary.with_name(primary.stem + LOCAL_CONFIG_SUFFIX)
     local = _load_toml(local_path)
     blocked = sorted(set((local.get("store") or {})) & {"backend", "connector", "hosting"})
     if blocked:
         raise ConfigValidationError(
             f"{local_path.name} must not set store.{', store.'.join(blocked)}: the database choice belongs in "
-            "config/jobsearch.toml and config/environments/<name>.toml."
+            "config/jobsearch.toml; the connector comes from JOBTRACKER_STORE_CONNECTOR."
         )
     merged = _deep_merge(merged, local)
     if "schema_version" not in merged:
@@ -112,12 +107,8 @@ def load_app_config(
             stacklevel=2,
         )
     validated = validate_jobsearch_config(merged)
-    _require_connector(validated["store"], primary.parent, environment)
-    if environment:
-        validated["store"]["environment"] = environment
+    _apply_environment_connector(validated["store"])
     sources = [primary]
-    if environment_path is not None:
-        sources.append(environment_path)
     if local_path.exists():
         sources.append(local_path)
     return AppConfig(
@@ -130,46 +121,32 @@ def load_app_config(
         pipelines=validated["pipelines"],
         notify=validated["notify"],
         sources=sources,
-        environment=environment,
     )
 
 
-def environment_files(config_dir: Path) -> list[str]:
-    directory = config_dir / ENVIRONMENTS_DIR
-    return sorted(path.stem for path in directory.glob("*.toml")) if directory.is_dir() else []
+def _apply_environment_connector(store: dict[str, Any]) -> None:
+    """Take the connector from this environment's JOBTRACKER_STORE_CONNECTOR; never from files.
 
-
-def _selected_environment(config_dir: Path) -> tuple[str | None, Path | None]:
-    """The environment named by JOBTRACKER_ENVIRONMENT; never guessed."""
+    The repository config stays environment-agnostic (which database, where it is
+    hosted). How this particular environment reaches it is the environment's own
+    setting. There is no default connector.
+    """
     from ..config import load_env_file
 
     load_env_file()
-    name = (os.getenv(ENVIRONMENT_ENV) or "").strip()
-    if not name:
-        return None, None
-    if not name.replace("-", "").replace("_", "").isalnum():
-        raise ConfigValidationError(f"{ENVIRONMENT_ENV} must be a simple name, got {name!r}")
-    path = config_dir / ENVIRONMENTS_DIR / f"{name}.toml"
-    if not path.exists():
-        available = ", ".join(environment_files(config_dir)) or "(none)"
-        raise ConfigValidationError(
-            f"{ENVIRONMENT_ENV}={name!r} but {path} does not exist. Available environments: {available}"
-        )
-    return name, path
-
-
-def _require_connector(store: dict[str, Any], config_dir: Path, environment: str | None) -> None:
-    if store.get("backend") != "postgres" or store.get("connector"):
+    name = (os.getenv(STORE_CONNECTOR_ENV) or "").strip().lower()
+    if store.get("backend") != "postgres":
+        if name:
+            raise ConfigValidationError(
+                f"{STORE_CONNECTOR_ENV}={name!r} is set, but store.backend is {store.get('backend')!r}; "
+                "connectors apply only to the PostgreSQL store."
+            )
         return
-    available = ", ".join(environment_files(config_dir)) or "(none)"
-    where = (
-        f"config/environments/{environment}.toml"
-        if environment
-        else (
-            f"config/environments/<name>.toml and select it with {ENVIRONMENT_ENV} (available: {available})"
+    if not name:
+        raise ConfigValidationError(
+            f"{STORE_CONNECTOR_ENV} is not set in this environment. The PostgreSQL store needs exactly one "
+            "connector per environment (for example postgres_direct or supabase_https). Run "
+            "`jobtracker probe-environment` to see which connectors this environment can use."
         )
-    )
-    raise ConfigValidationError(
-        f"store.connector is required for the PostgreSQL store; set it in {where}. "
-        "Run `jobtracker probe-environment` to see which connectors this environment can use."
-    )
+    store["connector"] = name
+    store["connector_source"] = STORE_CONNECTOR_ENV

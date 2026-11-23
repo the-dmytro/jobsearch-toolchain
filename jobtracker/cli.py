@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .app_config.loader import load_app_config
-from .automation import run_doctor, run_pipeline, scaffold_config, scaffold_environment
+from .automation import run_doctor, run_pipeline, scaffold_config
 from .automation_state import AutomationStateStore, open_automation_state
 from .cli_portability import register as register_portability
 from .config import load_env_file
@@ -41,32 +41,22 @@ def _print_json(value) -> None:
 
 def cmd_init(args: argparse.Namespace) -> int:
     root = Path(args.root)
-    result = scaffold_config(root=root, force=args.force, template=getattr(args, "template", "local"))
-    environment = getattr(args, "environment", None)
-    connector = getattr(args, "connector", None)
-    if bool(environment) != bool(connector):
-        raise ValueError("--environment and --connector are used together")
-    if environment:
-        if getattr(args, "template", "local") != "shared":
-            raise ValueError("--environment needs --template shared")
-        result["environment"] = scaffold_environment(
-            root=root,
-            environment=environment,
-            connector=connector,
-            hosting=getattr(args, "hosting", None),
-            force=args.force,
+    template = getattr(args, "template", "sqlite")
+    hosting = (getattr(args, "hosting", None) or "").strip().lower()
+    if hosting and template != "shared":
+        raise ValueError("--hosting applies only to --template shared")
+    result = scaffold_config(root=root, force=args.force, template=template)
+    if hosting:
+        config_path = root / "config" / "jobsearch.toml"
+        text = config_path.read_text(encoding="utf-8")
+        marker = '# hosting = "supabase"'
+        if marker in text:
+            config_path.write_text(text.replace(marker, f'hosting = "{hosting}"', 1), encoding="utf-8")
+            result["hosting"] = hosting
+    if template == "shared":
+        result["next_step"] = (
+            "set JOBTRACKER_STORE_CONNECTOR in each environment (see `jobtracker probe-environment`)"
         )
-        hosting = getattr(args, "hosting", None)
-        if hosting:
-            config_path = root / "config" / "jobsearch.toml"
-            text = config_path.read_text(encoding="utf-8")
-            marker = '# hosting = "supabase"'
-            if marker in text:
-                config_path.write_text(
-                    text.replace(marker, f'hosting = "{hosting.strip().lower()}"', 1), encoding="utf-8"
-                )
-                result["hosting"] = hosting.strip().lower()
-        result["next_step"] = f"set JOBTRACKER_ENVIRONMENT={environment} in this environment"
     _print_json(result)
     return 0
 
@@ -1122,15 +1112,13 @@ def build_parser() -> argparse.ArgumentParser:
     init_cmd.add_argument("--force", action="store_true", help="Overwrite existing scaffolded files")
     init_cmd.add_argument(
         "--template",
-        choices=["local", "shared"],
-        default="local",
-        help="local: SQLite on this machine; shared: one PostgreSQL database for several environments",
+        choices=["sqlite", "shared"],
+        default="sqlite",
+        help="sqlite: one local database file; shared: one PostgreSQL database used from several environments",
     )
-    init_cmd.add_argument("--environment", help="With --template shared: environment name to create")
     init_cmd.add_argument(
-        "--connector", help="With --environment: postgres_direct, supabase_https or a plugin"
+        "--hosting", help="With --template shared: where the database is hosted, only if the user said so"
     )
-    init_cmd.add_argument("--hosting", help="Optional: where the database is hosted, if the user said so")
     init_cmd.set_defaults(func=cmd_init)
 
     doctor = subparsers.add_parser("doctor", help="Validate config, connectors, and profile placeholders")

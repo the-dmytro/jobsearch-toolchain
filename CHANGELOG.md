@@ -11,13 +11,14 @@ All notable changes use semantic versions. The project is distributed from signe
 - PostgreSQL automation state (`--state-backend`), so processed messages and sent reports are shared across environments.
 - Store receipts with readback on `run` and `upsert-run`.
 - Database connectors (DB-CONNECTOR-V1, entry point `jobtracker.db_connectors`): `postgres_direct` for any PostgreSQL host and `supabase_https` (migration `008`) for Supabase over HTTPS in HTTP-only sandboxes. Blueprint for new connectors.
-- Per-environment config: `config/environments/<name>.toml` selected by `JOBTRACKER_ENVIRONMENT`; `[store] hosting` declares the provider when known.
-- `probe-environment`: reports platform, repository state and each connector's status without changing anything.
-- Environment setup guide with an agent procedure, `config/jobsearch.shared.example.toml`, `init --template shared --environment … --connector …`, `scripts/cloud/setup.sh` and `scripts/cloud/verify.sh`.
+- Environment-agnostic configuration: the repository config declares the database (`backend`, optional `hosting`); each environment selects its connector with its own variable `JOBTRACKER_STORE_CONNECTOR`.
+- `probe-environment`: reports runtime capabilities, repository state and each connector's status without identifying the platform or changing anything.
+- `config/setup-notes.example.md`: a shared log of verified setup findings for agents.
+- Environment setup guide with an agent procedure, `config/jobsearch.shared.example.toml`, `init --template sqlite|shared [--hosting …]`, `scripts/environment/setup.sh` and `scripts/environment/verify.sh`.
 
 ### Changed
 
-- **Breaking:** `[store].backend` is required (no implicit SQLite default); PostgreSQL also requires a `connector` (normally per environment). All commands, including migrations, imports, `db-smoke`, `dedupe-candidates --include-db` and the `fetch-*` aliases, use only the configured store. There are no fallbacks to another store.
+- **Breaking:** `[store].backend` is required (no implicit SQLite default); PostgreSQL also requires `JOBTRACKER_STORE_CONNECTOR` in each environment. All commands, including migrations, imports, `db-smoke`, `dedupe-candidates --include-db` and the `fetch-*` aliases, use only the configured store. There are no fallbacks to another store.
 - Mail state (`fetch-mail-folder`, `send-report-email`) lives in the configured store and requires the config file.
 - A missing `profile/provider_targets.toml` is an error instead of silently using bundled fixture targets.
 - With PostgreSQL, duplicates are decided by the database only; local payload history is used only with SQLite.

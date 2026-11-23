@@ -16,7 +16,7 @@ Install the selected optional Python dependencies:
 2. Copy `.env.example` to ignored `.env`.
 3. Set `JOBTRACKER_DATABASE_URL` to the hosted PostgreSQL connection string.
 4. If Supabase Storage is selected, set the documented Supabase URL, server secret, and bucket variables.
-5. Set `[store] backend = "postgres"` and `hosting = "supabase"` in `config/jobsearch.toml`, and choose this environment's connector (`postgres_direct` or `supabase_https`) as described in [environment setup](../onboarding/ENVIRONMENT_SETUP.md).
+5. Set `[store] backend = "postgres"` and `hosting = "supabase"` in `config/jobsearch.toml`, and set this environment's `JOBTRACKER_STORE_CONNECTOR` (`postgres_direct` or `supabase_https`) as described in [environment setup](../onboarding/ENVIRONMENT_SETUP.md).
 6. Apply migrations and check the connection:
 
 ```bash

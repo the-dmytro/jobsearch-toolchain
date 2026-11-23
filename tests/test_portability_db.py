@@ -204,7 +204,7 @@ class PortabilityDbTests(unittest.TestCase):
     def test_cli_documents_prune_and_compact(self) -> None:
         (self.root / "config").mkdir()
         (self.root / "config/jobsearch.toml").write_text(
-            'schema_version = 1\n[store]\nbackend = "postgres"\nconnector = "postgres_direct"\nprune_min_age_hours = 0\n',
+            'schema_version = 1\n[store]\nbackend = "postgres"\nprune_min_age_hours = 0\n',
             encoding="utf-8",
         )
         note = self.root / "notes/company.md"
@@ -221,7 +221,10 @@ class PortabilityDbTests(unittest.TestCase):
                     (json.dumps({"payload": {"big": "x" * 1000}}),),
                 )
             conn.commit()
-        env = {"JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"]}
+        env = {
+            "JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"],
+            "JOBTRACKER_STORE_CONNECTOR": "postgres_direct",
+        }
         with mock.patch.dict(os.environ, env):
             out = io.StringIO()
             with redirect_stdout(out):
@@ -320,12 +323,12 @@ class ProbeAgainstDatabaseTests(unittest.TestCase):
             root = Path(temp_dir)
             (root / "config").mkdir()
             (root / "config/jobsearch.toml").write_text(
-                'schema_version = 1\n[store]\nbackend = "postgres"\nconnector = "postgres_direct"\n',
+                'schema_version = 1\n[store]\nbackend = "postgres"\n',
                 encoding="utf-8",
             )
             env = {
                 "JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"],
-                "JOBTRACKER_ENVIRONMENT": "",
+                "JOBTRACKER_STORE_CONNECTOR": "postgres_direct",
             }
             with mock.patch.dict(os.environ, env):
                 probe = probe_environment(root, timeout=3)

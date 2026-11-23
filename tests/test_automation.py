@@ -492,9 +492,12 @@ class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
         self.write_profile_documents()
         config_path = self.root / "config/jobsearch.toml"
         content = config_path.read_text(encoding="utf-8").replace(
-            'backend = "sqlite"', 'backend = "postgres"\nconnector = "postgres_direct"'
+            'backend = "sqlite"', 'backend = "postgres"'
         )
         config_path.write_text(content, encoding="utf-8")
+        patcher = mock.patch.dict(os.environ, {"JOBTRACKER_STORE_CONNECTOR": "postgres_direct"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_unreachable_database_is_an_error_with_no_local_copy(self) -> None:
         from jobtracker.db import MissingConfigurationError
