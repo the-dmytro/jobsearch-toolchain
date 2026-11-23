@@ -5,38 +5,46 @@ cloud session, another coding agent). PostgreSQL then holds everything that othe
 environments need: runs, opportunity cards, evaluations, applications, automation
 state, and documents. Local files are temporary.
 
-## One store, no fallback
+## One store, one connector per environment, no fallback
 
 `[store].backend` is required and is the only database the project uses:
 
 - `"sqlite"`: everything stays in the local SQLite file. Not shared.
-- `"postgres"`: everything goes to one PostgreSQL database. `transport` is required:
-  `"direct"` (PostgreSQL protocol, `JOBTRACKER_DATABASE_URL`) or `"supabase_https"`
-  (Supabase Data API over HTTPS, `SUPABASE_URL` + `SUPABASE_SECRET_KEY`; works behind
-  HTTP-only proxies, see [cloud environments](../onboarding/CLOUD_ENVIRONMENT.md)).
+- `"postgres"`: everything goes to one PostgreSQL database. Each environment reaches
+  it through exactly one **connector**, set in `config/environments/<environment>.toml`
+  and selected with `JOBTRACKER_ENVIRONMENT`. Built-in connectors: `postgres_direct`
+  (any host, PostgreSQL protocol, `JOBTRACKER_DATABASE_URL`) and `supabase_https`
+  (Supabase-hosted only, HTTPS, `SUPABASE_URL` + `SUPABASE_SECRET_KEY`). See
+  [environment setup](../onboarding/ENVIRONMENT_SETUP.md) and the
+  [connector blueprint](../connectors/writing-a-database-connector.md).
 
-The two transports are alternatives. `direct` uses only `JOBTRACKER_DATABASE_URL`;
-`supabase_https` uses only `SUPABASE_URL` and the secret key. One is never tried when
-the other fails.
-
-If the configured store is unreachable, the command fails (exit code 2). Nothing is
-written to another store, and no command switches stores or transports by itself.
-Every write prints a receipt and is read back:
+Connectors are alternatives: each reads only its own settings and none is tried when
+another fails. If the configured store is unreachable, the command fails (exit code 2);
+nothing is written anywhere else. Every write prints a receipt and is read back:
 
 ```json
-{"persistence": "stored", "store": {"backend": "postgres", "transport": "supabase_https", "target": "ref.supabase.co", "shared": true}, "verified": true}
+{"persistence": "stored", "store": {"backend": "postgres", "connector": "supabase_https", "target": "ref.supabase.co", "shared": true, "hosting": "supabase", "environment": "claude-code-cloud"}, "verified": true}
 ```
 
 ```toml
+# config/jobsearch.toml (shared by every environment)
 [store]
 backend = "postgres"
-transport = "supabase_https"   # or "direct"
+hosting = "supabase"           # only if known
 text_retention = "shortlisted" # shortlisted | all | none
 auto_prune = true
 prune_min_age_hours = 24
+
+# config/environments/claude-code-cloud.toml
+[store]
+connector = "supabase_https"
+
+# config/environments/laptop.toml
+[store]
+connector = "postgres_direct"
 ```
 
-Over `supabase_https` each statement commits on its own. Writes are idempotent and
+With `supabase_https` each statement commits on its own. Writes are idempotent and
 read back, so if a command fails midway it exits non-zero and rerunning it completes
 the write.
 

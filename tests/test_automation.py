@@ -278,17 +278,21 @@ class RunDoctorTests(ScaffoldedRootTestCase):
 class ConnectivityCheckTests(unittest.TestCase):
     def test_database_check_reports_an_unconfigured_url(self) -> None:
         with mock.patch.object(automation, "load_settings", return_value=settings()):
-            self.assertEqual(
-                check_db_connectivity(),
-                ["database: JOBTRACKER_DATABASE_URL is not configured"],
-            )
+            with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": ""}):
+                self.assertEqual(
+                    check_db_connectivity({"backend": "postgres", "connector": "postgres_direct"}),
+                    ["database: postgres_direct needs JOBTRACKER_DATABASE_URL"],
+                )
 
     def test_database_check_wraps_connection_errors(self) -> None:
-        from jobtracker.store import registry as store_registry
+        from jobtracker.store.connectors import postgres_direct
 
         with mock.patch.object(automation, "load_settings", return_value=settings(db_url="postgres://x")):
-            with mock.patch.object(store_registry, "connect", side_effect=RuntimeError("connection refused")):
-                issues = check_db_connectivity()
+            with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": "postgres://x"}):
+                with mock.patch.object(
+                    postgres_direct, "connect", side_effect=RuntimeError("connection refused")
+                ):
+                    issues = check_db_connectivity({"backend": "postgres", "connector": "postgres_direct"})
 
         self.assertEqual(issues, ["database: connection refused"])
 
@@ -488,7 +492,7 @@ class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
         self.write_profile_documents()
         config_path = self.root / "config/jobsearch.toml"
         content = config_path.read_text(encoding="utf-8").replace(
-            'backend = "sqlite"', 'backend = "postgres"\ntransport = "direct"'
+            'backend = "sqlite"', 'backend = "postgres"\nconnector = "postgres_direct"'
         )
         config_path.write_text(content, encoding="utf-8")
 

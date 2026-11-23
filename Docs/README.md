@@ -12,7 +12,7 @@ Choose the smallest path that matches the setup. The standard path is Python plu
 6. [Optional PostgreSQL and Supabase](DB/SUPABASE_JOB_TRACKER.md) and [shared store across environments](DB/SHARED_STORE.md)
 7. [Optional CRM and analytics](onboarding/CRM_ANALYTICS.md)
 8. [Notifications and automation](onboarding/AUTOMATION.md)
-9. [Cloud environments](onboarding/CLOUD_ENVIRONMENT.md)
+9. [Environment setup (local, cloud, CI)](onboarding/ENVIRONMENT_SETUP.md)
 10. [Troubleshooting](onboarding/TROUBLESHOOTING.md)
 11. [Privacy model](onboarding/PRIVACY.md)
 

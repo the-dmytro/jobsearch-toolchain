@@ -27,7 +27,7 @@ POSTGRES_CONFIG = """schema_version = 1
 
 [store]
 backend = "postgres"
-transport = "direct"
+connector = "postgres_direct"
 """
 
 
@@ -86,14 +86,19 @@ class ExplicitStoreTests(unittest.TestCase):
     def test_describe_store_never_leaks_credentials(self) -> None:
         url = "postgresql://user:secret-password@db.example.invalid:5432/postgres"
         with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": url}):
-            receipt = describe_store({"backend": "supabase", "transport": "direct"}, root=Path("."))
+            receipt = describe_store({"backend": "supabase", "connector": "postgres_direct"}, root=Path("."))
         self.assertEqual(
             receipt,
-            {"backend": "postgres", "transport": "direct", "target": "db.example.invalid", "shared": True},
+            {
+                "backend": "postgres",
+                "connector": "postgres_direct",
+                "target": "db.example.invalid",
+                "shared": True,
+            },
         )
         self.assertNotIn("secret", json.dumps(receipt))
         with mock.patch.dict(os.environ, {"SUPABASE_URL": "https://ref.supabase.co"}):
-            receipt = describe_store({"backend": "postgres", "transport": "supabase_https"}, root=Path("."))
+            receipt = describe_store({"backend": "postgres", "connector": "supabase_https"}, root=Path("."))
         self.assertEqual(receipt["target"], "ref.supabase.co")
 
     def test_unreachable_database_is_an_error_and_nothing_is_written_locally(self) -> None:
@@ -237,25 +242,60 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class CloudTemplateTests(unittest.TestCase):
-    def test_cloud_template_is_a_valid_shared_store_config(self) -> None:
+class SharedTemplateTests(unittest.TestCase):
+    def test_shared_template_needs_an_explicit_environment(self) -> None:
         from jobtracker.app_config.loader import load_app_config
-        from jobtracker.automation import scaffold_config
+        from jobtracker.app_config.schema import ConfigValidationError
+        from jobtracker.automation import scaffold_config, scaffold_environment
 
         repo = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "config").mkdir()
-            for name in ("jobsearch.example.toml", "jobsearch.cloud.example.toml"):
+            for name in ("jobsearch.example.toml", "jobsearch.shared.example.toml"):
                 (root / "config" / name).write_text(
                     (repo / "config" / name).read_text(encoding="utf-8"), encoding="utf-8"
                 )
-            scaffold_config(root=root, template="cloud")
-            config = load_app_config(root=root)
-            self.assertEqual(config.store["backend"], "postgres")
-            self.assertEqual(config.store["transport"], "supabase_https")
+            scaffold_config(root=root, template="shared")
+            with mock.patch.dict(os.environ, {"JOBTRACKER_ENVIRONMENT": ""}):
+                with self.assertRaises(ConfigValidationError) as caught:
+                    load_app_config(root=root)
+            self.assertIn("probe-environment", str(caught.exception))
+            scaffold_environment(root=root, environment="laptop", connector="postgres_direct")
+            scaffold_environment(root=root, environment="claude-code-cloud", connector="supabase_https")
+            with mock.patch.dict(os.environ, {"JOBTRACKER_ENVIRONMENT": "laptop"}):
+                config = load_app_config(root=root)
+            self.assertEqual((config.environment, config.store["connector"]), ("laptop", "postgres_direct"))
+            with mock.patch.dict(os.environ, {"JOBTRACKER_ENVIRONMENT": "claude-code-cloud"}):
+                config = load_app_config(root=root)
+            self.assertEqual(config.store["connector"], "supabase_https")
+            self.assertEqual(config.store["environment"], "claude-code-cloud")
+            with mock.patch.dict(os.environ, {"JOBTRACKER_ENVIRONMENT": "codex"}):
+                with self.assertRaises(ConfigValidationError) as caught:
+                    load_app_config(root=root)
+            self.assertIn("claude-code-cloud, laptop", str(caught.exception))
+            (root / "config/jobsearch.local.toml").write_text('[store]\nconnector = "x"\n', encoding="utf-8")
+            with mock.patch.dict(os.environ, {"JOBTRACKER_ENVIRONMENT": "laptop"}):
+                with self.assertRaises(ConfigValidationError):
+                    load_app_config(root=root)
             with self.assertRaises(ValueError):
                 scaffold_config(root=root, template="nope", force=True)
+            with self.assertRaises(ValueError):
+                scaffold_environment(root=root, environment="x", connector="supabase_https", hosting="neon")
+            with self.assertRaises(FileExistsError):
+                scaffold_environment(root=root, environment="laptop", connector="postgres_direct")
+
+    def test_connector_must_match_declared_hosting(self) -> None:
+        from jobtracker.store.registry import describe_store
+
+        with self.assertRaises(MissingConfigurationError):
+            describe_store(
+                {"backend": "postgres", "connector": "supabase_https", "hosting": "neon"}, root=Path(".")
+            )
+        with self.assertRaises(MissingConfigurationError):
+            describe_store({"backend": "postgres", "connector": "mysql_magic"}, root=Path("."))
+        with self.assertRaises(MissingConfigurationError):
+            describe_store({"backend": "postgres"}, root=Path("."))
 
     def test_cloud_scripts_exist_and_are_executable(self) -> None:
         repo = Path(__file__).resolve().parent.parent
@@ -265,27 +305,29 @@ class CloudTemplateTests(unittest.TestCase):
             self.assertTrue(os.access(path, os.X_OK))
 
 
-class TransportIsolationTests(unittest.TestCase):
-    """direct and supabase_https are alternatives: neither is ever used for the other."""
+class ConnectorIsolationTests(unittest.TestCase):
+    """postgres_direct and supabase_https are alternatives: neither is ever used for the other."""
 
     def test_https_failure_never_tries_direct(self) -> None:
         from jobtracker.store import registry
+        from jobtracker.store.connectors import postgres_direct
 
         env = {
             "SUPABASE_URL": "https://127.0.0.1:9",
             "SUPABASE_SECRET_KEY": "k",
             "JOBTRACKER_DATABASE_URL": "postgresql://u:p@db.example.invalid/x",
         }
-        with mock.patch.dict(os.environ, env), mock.patch.object(registry, "connect") as direct:
+        with mock.patch.dict(os.environ, env), mock.patch.object(postgres_direct, "connect") as direct:
             with self.assertRaises(MissingConfigurationError):
                 with registry.open_job_store(
-                    {"backend": "postgres", "transport": "supabase_https"}, root=Path(".")
+                    {"backend": "postgres", "connector": "supabase_https"}, root=Path(".")
                 ) as store:
                     store.verify_run("x")
         direct.assert_not_called()
 
     def test_direct_failure_never_tries_https(self) -> None:
-        from jobtracker.store import https_sql, registry
+        from jobtracker.store import registry
+        from jobtracker.store.connectors import supabase_https as https_sql
 
         env = {
             "SUPABASE_URL": "https://ref.supabase.co",
@@ -294,7 +336,9 @@ class TransportIsolationTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, env), mock.patch.object(https_sql, "connect_https") as https:
             with self.assertRaises(MissingConfigurationError):
-                with registry.open_job_store({"backend": "postgres", "transport": "direct"}, root=Path(".")):
+                with registry.open_job_store(
+                    {"backend": "postgres", "connector": "postgres_direct"}, root=Path(".")
+                ):
                     pass
         https.assert_not_called()
 
@@ -308,3 +352,79 @@ class TransportIsolationTests(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, env):
             self.assertEqual(https_sql.https_settings(), ("https://ref.supabase.co", "k"))
+
+
+class ProbeTests(unittest.TestCase):
+    def _root(self, temp_dir: str, store: str) -> Path:
+        root = Path(temp_dir)
+        (root / "config").mkdir()
+        (root / "config/jobsearch.toml").write_text(
+            f"schema_version = 1\n[store]\n{store}\n", encoding="utf-8"
+        )
+        return root
+
+    def test_postgres_alone_is_not_evidence_of_supabase(self) -> None:
+        from jobtracker.probe import format_probe, probe_environment
+
+        env = {"JOBTRACKER_DATABASE_URL": "", "SUPABASE_URL": "", "JOBTRACKER_ENVIRONMENT": ""}
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, env):
+            root = self._root(temp_dir, 'backend = "postgres"')
+            probe = probe_environment(root, timeout=1)
+        candidates = {item["connector"]: item for item in probe["database"]["candidates"]}
+        self.assertEqual(candidates["supabase_https"]["status"], "not_applicable")
+        self.assertEqual(candidates["postgres_direct"]["status"], "not_configured")
+        self.assertEqual(probe["repository"]["setup_state"], "new")
+        self.assertIn("store.connector is required", probe["repository"]["config_error"])
+        self.assertEqual(probe["repository"]["store"]["backend"], "postgres")
+        self.assertIn("supabase_https", format_probe(probe))
+        self.assertNotIn(
+            "secret", json.dumps(probe).lower().replace("supabase_secret_key", "").replace("secrets", "")
+        )
+
+    def test_declared_supabase_hosting_makes_the_https_connector_applicable(self) -> None:
+        from jobtracker.probe import probe_environment
+
+        env = {
+            "JOBTRACKER_DATABASE_URL": "postgresql://u:hidden-pass@127.0.0.1:9/x",
+            "SUPABASE_URL": "https://127.0.0.1:9",
+            "SUPABASE_SECRET_KEY": "",
+            "JOBTRACKER_ENVIRONMENT": "",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(os.environ, env):
+            root = self._root(
+                temp_dir, 'backend = "postgres"\nhosting = "supabase"\nconnector = "supabase_https"'
+            )
+            probe = probe_environment(root, timeout=1)
+        candidates = {item["connector"]: item for item in probe["database"]["candidates"]}
+        self.assertEqual(candidates["postgres_direct"]["status"], "blocked")
+        self.assertEqual(candidates["supabase_https"]["status"], "blocked")
+        self.assertTrue(candidates["supabase_https"]["selected"])
+        self.assertIn('store.hosting = "supabase"', probe["database"]["supabase_evidence"])
+        self.assertNotIn("hidden-pass", json.dumps(probe))
+
+    def test_plugin_connectors_join_the_registry(self) -> None:
+        from jobtracker.store.connectors import ConnectorInfo, ProbeResult, connector_registry, get_connector
+
+        class FakeConnector:
+            info = ConnectorInfo("fake_http", "postgres", "https", "acme", False, ("ACME_URL",), (), "test")
+
+            def connect(self, options):
+                raise AssertionError("not used")
+
+            def target(self, options):
+                return "acme"
+
+            def probe(self, options, *, timeout):
+                return ProbeResult("fake_http", "not_configured", needs=["ACME_URL"])
+
+        connector_registry.register("fake_http")(FakeConnector())
+        try:
+            self.assertEqual(get_connector("fake_http").info.hosting, "acme")
+            from jobtracker.store.registry import describe_store
+
+            receipt = describe_store(
+                {"backend": "postgres", "connector": "fake_http", "hosting": "acme"}, root=Path(".")
+            )
+            self.assertEqual(receipt["target"], "acme")
+        finally:
+            connector_registry._items.pop("fake_http", None)

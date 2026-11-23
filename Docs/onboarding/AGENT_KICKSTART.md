@@ -8,6 +8,8 @@ Explain that the standard setup uses Python, SQLite, and local artifacts. Ask wh
 
 Confirm the project root, operating system (macOS or Linux), Python version, and whether an existing CV/profile can be read from a user-provided local path. Never move or copy credentials without explicit instruction.
 
+Before choosing storage, find out where you are: run `.venv/bin/python -m jobtracker probe-environment --format text` and follow [environment setup](ENVIRONMENT_SETUP.md). If the repository already has a config and profile from another environment, treat it as an existing project: keep its database and add only an environment file for this place.
+
 ## 2. Prove the public fixture core
 
 Run installation and deterministic fixture checks before collecting personal data:
@@ -35,7 +37,7 @@ Collect and confirm, in manageable groups:
 - chosen search sources and any service-specific target identifiers;
 - optional mail inbox, alert parsers, outbound mail, and report recipient;
 - optional notifications and channels;
-- SQLite or optional PostgreSQL/Supabase storage;
+- SQLite (local only) or a shared PostgreSQL database, where it is hosted, and how this environment reaches it (see [environment setup](ENVIRONMENT_SETUP.md); never assume a provider);
 - optional CRM;
 - desired automation cadence, quiet periods, and failure notifications.
 

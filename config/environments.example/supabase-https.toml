@@ -1,0 +1,6 @@
+# Environment overlay: reach a Supabase-hosted database over HTTPS (Data API).
+# Copy to config/environments/<environment>.toml and set JOBTRACKER_ENVIRONMENT=<environment>.
+# Needs SUPABASE_URL and SUPABASE_SECRET_KEY, and migration 008 in the database.
+# Use it where only HTTP(S) leaves the sandbox (for example Claude Code cloud sessions).
+[store]
+connector = "supabase_https"

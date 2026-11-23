@@ -1,0 +1,6 @@
+# Environment overlay: reach the database over the PostgreSQL protocol.
+# Copy to config/environments/<environment>.toml and set JOBTRACKER_ENVIRONMENT=<environment>.
+# Needs JOBTRACKER_DATABASE_URL in this environment. Works for any PostgreSQL host
+# that this environment can reach over TCP (check with `jobtracker probe-environment`).
+[store]
+connector = "postgres_direct"

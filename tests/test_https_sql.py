@@ -1,4 +1,4 @@
-"""Tests for the supabase_https transport: SQL rendering and an end-to-end gateway run.
+"""Tests for the supabase_https connector: SQL rendering and an end-to-end gateway run.
 
 The end-to-end test serves POST /rest/v1/rpc/jobtracker_sql from a local HTTP server
 that calls the real migration-008 function on the local test PostgreSQL database.
@@ -234,7 +234,7 @@ class HttpsGatewayTests(unittest.TestCase):
             with unreachable.cursor() as cur:
                 cur.execute("select 1")
 
-    def test_open_job_store_uses_the_configured_https_transport(self) -> None:
+    def test_open_job_store_uses_the_configured_https_connector(self) -> None:
         env = {"SUPABASE_URL": self.base_url, "SUPABASE_SECRET_KEY": _Gateway.api_key}
         with (
             mock.patch.dict(os.environ, env),
@@ -242,7 +242,7 @@ class HttpsGatewayTests(unittest.TestCase):
         ):
             settings.return_value = (self.base_url, _Gateway.api_key)
             with open_job_store(
-                {"backend": "postgres", "transport": "supabase_https"}, root=Path(".")
+                {"backend": "postgres", "connector": "supabase_https"}, root=Path(".")
             ) as store:
                 self.assertIsInstance(store.conn, HttpsConnection)
                 self.assertIsNone(store.verify_run("missing"))

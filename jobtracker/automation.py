@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from contextlib import ExitStack, nullcontext
 from datetime import datetime
@@ -27,8 +28,32 @@ PROFILE_TEMPLATE_DIR = Path("profile/templates/generic")
 
 CONFIG_TEMPLATES = {
     "local": EXAMPLE_CONFIG_PATH,
-    "cloud": Path("config/jobsearch.cloud.example.toml"),
+    "shared": Path("config/jobsearch.shared.example.toml"),
 }
+
+
+def scaffold_environment(
+    *, root: Path, environment: str, connector: str, hosting: str | None = None, force: bool = False
+) -> str:
+    """Write config/environments/<environment>.toml selecting exactly one connector."""
+    from .store.connectors import get_connector
+
+    info = get_connector(connector).info
+    if hosting and info.hosting not in {"any", hosting}:
+        raise ValueError(f"connector {connector!r} works only with {info.hosting!r} hosting, not {hosting!r}")
+    if not environment.replace("-", "").replace("_", "").isalnum():
+        raise ValueError(f"environment must be a simple name, got {environment!r}")
+    path = root / "config" / "environments" / f"{environment}.toml"
+    if path.exists() and not force:
+        raise FileExistsError(f"{path} exists; pass --force to replace it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    needs = ", ".join(info.settings)
+    path.write_text(
+        f"# Environment {environment!r}: select it with JOBTRACKER_ENVIRONMENT={environment}.\n"
+        f'# {info.description}\n# Needs: {needs}\n[store]\nconnector = "{info.name}"\n',
+        encoding="utf-8",
+    )
+    return str(path)
 
 
 def scaffold_config(
@@ -110,15 +135,18 @@ def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
     return results
 
 
-def check_db_connectivity(store_options: dict[str, Any] | None = None) -> list[str]:
-    """Check the PostgreSQL transport named in config (direct or supabase_https)."""
-    from .store.registry import connect_postgres
+def check_db_connectivity(store_options: dict[str, Any]) -> list[str]:
+    """Check the one database connector named in config."""
+    from .store.registry import connect_postgres, postgres_connector
 
-    options = store_options or {"backend": "postgres", "transport": "direct"}
-    if options.get("transport") != "supabase_https" and not load_settings().db_url:
-        return ["database: JOBTRACKER_DATABASE_URL is not configured"]
     try:
-        with connect_postgres(options) as conn:
+        connector = postgres_connector(store_options)
+        missing = [name for name in connector.info.settings if not (os.getenv(name) or "").strip()]
+        if connector.info.name == "postgres_direct" and not missing and not load_settings().db_url:
+            missing = ["JOBTRACKER_DATABASE_URL"]
+        if missing:
+            return [f"database: {connector.info.name} needs {', '.join(missing)}"]
+        with connect_postgres(store_options) as conn:
             with conn.cursor() as cur:
                 cur.execute("select 1 as ok")
                 cur.fetchone()

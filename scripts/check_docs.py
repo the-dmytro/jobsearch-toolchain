@@ -42,6 +42,7 @@ JOBTRACKER_COMMANDS = {
     "migrate",
     "parse-upwork-alerts",
     "prepare-jobboard-run",
+    "probe-environment",
     "prune-local",
     "record-application",
     "run",
