@@ -15,6 +15,10 @@ state, and documents. Local files are temporary.
   (Supabase Data API over HTTPS, `SUPABASE_URL` + `SUPABASE_SECRET_KEY`; works behind
   HTTP-only proxies, see [cloud environments](../onboarding/CLOUD_ENVIRONMENT.md)).
 
+The two transports are alternatives. `direct` uses only `JOBTRACKER_DATABASE_URL`;
+`supabase_https` uses only `SUPABASE_URL` and the secret key. One is never tried when
+the other fails.
+
 If the configured store is unreachable, the command fails (exit code 2). Nothing is
 written to another store, and no command switches stores or transports by itself.
 Every write prints a receipt and is read back:
