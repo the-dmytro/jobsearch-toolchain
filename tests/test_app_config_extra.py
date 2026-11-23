@@ -190,11 +190,11 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
             validate_jobsearch_config({"store": {"backend": "sqlite", "connector": "postgres_direct"}})
         with self.assertRaises(ConfigValidationError):
             validate_jobsearch_config({"store": {"backend": "sqlite", "required_backend": "sqlite"}})
-        validated = validate_jobsearch_config(
-            {"store": {"backend": "supabase", "connector": "Supabase_HTTPS", "hosting": "Supabase"}}
-        )
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "postgres", "connector": "postgres_direct"}})
+        validated = validate_jobsearch_config({"store": {"backend": "supabase", "hosting": "Supabase"}})
         self.assertEqual(validated["store"]["backend"], "postgres")
-        self.assertEqual(validated["store"]["connector"], "supabase_https")
+        self.assertNotIn("connector", validated["store"])
         self.assertEqual(validated["store"]["hosting"], "supabase")
 
     def test_unknown_schema_version_is_rejected(self) -> None:

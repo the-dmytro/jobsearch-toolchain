@@ -17,7 +17,7 @@ not already at the project root.
 | `export-summary` | Export one application summary through the configured `JobStore` |
 
 ```bash
-python -m jobtracker init                    # or: init --template cloud
+python -m jobtracker init                    # or: init --template shared
 python -m jobtracker doctor --skip-network
 python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 python -m jobtracker run jobboards --fixture-dir jobtracker/fixtures/provider_fetch

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Cloud environment setup script for the JobSearch toolchain.
-# Paste this file's body into the environment's setup script. It runs as root
-# before the agent starts, from the directory that holds the repository checkouts
-# (or from inside a checkout). Environment variables are not available here.
-# It is idempotent and skips directories that are not a toolchain checkout.
+# Environment setup script for the JobSearch toolchain (any platform with bash and python3).
+# Use it as the environment's setup or provisioning script, or run it by hand.
+# Run it from a checkout or from the directory that holds checkouts. It reads no
+# secrets, is idempotent, and skips directories that are not a toolchain checkout.
 set -euo pipefail
 
 install_checkout() {

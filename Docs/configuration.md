@@ -19,9 +19,9 @@ Machine-readable rules are in [`schemas/jobsearch-config.v1.schema.json`](../sch
 ## Store
 
 `[store].backend` is required: `"sqlite"` or `"postgres"`. There is no default and no
-fallback. PostgreSQL also needs one connector per environment (`connector` in
-`config/environments/<environment>.toml`, selected by `JOBTRACKER_ENVIRONMENT`); see
-[Shared PostgreSQL store](DB/SHARED_STORE.md) and [cloud environments](onboarding/ENVIRONMENT_SETUP.md).
+fallback. PostgreSQL also needs one connector per environment, named by that environment's
+variable `JOBTRACKER_STORE_CONNECTOR` (never in a config file); see
+[Shared PostgreSQL store](DB/SHARED_STORE.md) and [environment setup](onboarding/ENVIRONMENT_SETUP.md).
 
 ### Local-first store
 
@@ -35,7 +35,7 @@ artifact_local_path = "outputs/artifacts"
 
 PostgreSQL is opt-in. Connector `postgres_direct` reads `JOBTRACKER_DATABASE_URL`; connector `supabase_https` reads `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from ignored `.env` or the environment.
 
-Merge order: `config/jobsearch.toml`, then `config/environments/$JOBTRACKER_ENVIRONMENT.toml`, then `config/jobsearch.local.toml` (which must not change the store choice).
+Merge order: `config/jobsearch.toml`, then `config/jobsearch.local.toml` (machine-local, must not change `backend` or `hosting`). The connector always comes from `JOBTRACKER_STORE_CONNECTOR`.
 
 ## Pipeline
 

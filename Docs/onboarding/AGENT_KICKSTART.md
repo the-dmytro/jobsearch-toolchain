@@ -8,7 +8,7 @@ Explain that the standard setup uses Python, SQLite, and local artifacts. Ask wh
 
 Confirm the project root, operating system (macOS or Linux), Python version, and whether an existing CV/profile can be read from a user-provided local path. Never move or copy credentials without explicit instruction.
 
-Before choosing storage, find out where you are: run `.venv/bin/python -m jobtracker probe-environment --format text` and follow [environment setup](ENVIRONMENT_SETUP.md). If the repository already has a config and profile from another environment, treat it as an existing project: keep its database and add only an environment file for this place.
+Before choosing storage, find out where you are: run `.venv/bin/python -m jobtracker probe-environment --format text` and follow [environment setup](ENVIRONMENT_SETUP.md). If the repository already has a config and profile from another environment, treat it as an existing project: keep its database and only set this environment's `JOBTRACKER_STORE_CONNECTOR`.
 
 ## 2. Prove the public fixture core
 

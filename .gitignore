@@ -10,7 +10,7 @@
 !/profile/templates/**
 /config/jobsearch.toml
 /config/jobsearch.local.toml
-/config/environments/
+/config/setup-notes.md
 /.jobsearch-onboarding.json
 /Docs/Tracking/
 /outputs/
