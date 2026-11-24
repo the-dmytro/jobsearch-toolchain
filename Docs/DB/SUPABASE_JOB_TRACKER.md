@@ -16,7 +16,7 @@ Install the selected optional Python dependencies:
 2. Copy `.env.example` to ignored `.env`.
 3. Set `JOBTRACKER_DATABASE_URL` to the hosted PostgreSQL connection string.
 4. If Supabase Storage is selected, set the documented Supabase URL, server secret, and bucket variables.
-5. Change `[store].backend` to `postgres` in ignored `config/jobsearch.toml`.
+5. Set `[store] backend = "postgres"` and `hosting = "supabase"` in `config/jobsearch.toml`, and set this environment's `JOBTRACKER_STORE_CONNECTOR` (`postgres_direct` or `supabase_https`) as described in [environment setup](../onboarding/ENVIRONMENT_SETUP.md).
 6. Apply migrations and check the connection:
 
 ```bash
@@ -24,11 +24,11 @@ Install the selected optional Python dependencies:
 .venv/bin/python -m jobtracker db-smoke
 ```
 
-Use the provider's TLS connection requirements. Keep connection strings and keys only in `.env`. The CLI is the supported database boundary; temporary environment-specific MCP exceptions do not belong in reusable playbooks.
+Use the provider's TLS connection requirements. Keep connection strings and keys only in `.env`. The CLI is the supported database boundary for toolchain data. Agent-side database tools (for example an MCP connector) are only for inspection and user-approved bootstrap steps, as described in [environment setup](../onboarding/ENVIRONMENT_SETUP.md).
 
 ## Replay local payloads
 
-JSON payload artifacts are the recovery boundary when switching stores:
+When moving from SQLite to PostgreSQL, the retained JSON payload artifacts carry the history over:
 
 ```bash
 .venv/bin/python -m jobtracker sync-pending-runs \
@@ -54,6 +54,9 @@ The test URL must be local and must never equal the production URL.
 The CRM requires Node.js 20 and hosted Supabase Auth plus the PostgreSQL analytics views. It is not needed for collection, SQLite tracking, payload replay, reports, or connector development. See [the CRM guide](../../crm/README.md).
 
 ## Data boundaries
+
+For work across several machines or agents, follow [Shared PostgreSQL store](SHARED_STORE.md):
+required backend, shared automation state, documents, and verified local cleanup.
 
 - Structured shared data: selected PostgreSQL instance.
 - Local recovery and audit boundary: ignored JSON payload artifacts.

@@ -12,6 +12,9 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.config import Settings
 from jobtracker.store.artifacts import local as local_artifacts
 from jobtracker.store.artifacts import supabase_storage
@@ -218,7 +221,6 @@ def settings(**overrides) -> Settings:
         "secret_key": None,
         "service_role_key": None,
         "storage_bucket": "job-artifacts",
-        "store_backend": "postgres",
         "artifact_backend": "local",
         "mail_folder_aliases": {},
         "own_report_senders": frozenset(),

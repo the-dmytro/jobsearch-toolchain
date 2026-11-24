@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.db import connect_test
 from jobtracker.greenhouse_import import import_greenhouse_tracking
 from jobtracker.legacy_import import import_legacy_csv
 from jobtracker.linkedin_import import import_linkedin_tracking
-from jobtracker.migrations import apply_migrations
-from jobtracker.payloads import check_duplicates, upsert_run_payload
 from jobtracker.provider_fetch import collect_provider_run
+from jobtracker.store.generic.postgres import PostgresJobStore
+from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 LEGACY_HEADER = [
     "Company",
@@ -66,34 +68,11 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]], del
         writer.writerows(rows)
 
 
-def _test_db_reachable() -> bool:
-    if not os.getenv("SUPABASE_TEST_DB_URL"):
-        return False
-    try:
-        with connect_test() as conn:
-            with conn.cursor() as cur:
-                cur.execute("select 1")
-        return True
-    except Exception:
-        return False
-
-
-def _bootstrap_plain_postgres(conn) -> None:
-    bootstrap = Path(__file__).resolve().parent.parent / "db" / "ci" / "plain_postgres_bootstrap.sql"
-    if not bootstrap.exists():
-        return
-    with conn.cursor() as cur:
-        cur.execute(bootstrap.read_text(encoding="utf-8"))
-    conn.commit()
-
-
-@unittest.skipUnless(_test_db_reachable(), "SUPABASE_TEST_DB_URL must point at a reachable database")
+@unittest.skipUnless(test_db_reachable(), SKIP_REASON)
 class DbIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        with connect_test() as conn:
-            _bootstrap_plain_postgres(conn)
-            apply_migrations(conn)
+        prepare_test_database()
 
     def setUp(self) -> None:
         with connect_test() as conn:
@@ -324,9 +303,10 @@ class DbIntegrationTests(unittest.TestCase):
                 )
                 first_greenhouse = import_greenhouse_tracking(conn, csv_path=greenhouse_csv)
                 second_greenhouse = import_greenhouse_tracking(conn, csv_path=greenhouse_csv)
-                first_payload = upsert_run_payload(conn, "upwork", payload_path)
-                second_payload = upsert_run_payload(conn, "upwork", payload_path)
-                dupes = check_duplicates(conn, "upwork", None, None, external_id="upwork-test-1")
+                store = PostgresJobStore(conn)
+                first_payload = vars(store.upsert_run_payload("upwork", payload_path))
+                second_payload = vars(store.upsert_run_payload("upwork", payload_path))
+                dupes = store.check_duplicates("upwork", None, None, external_id="upwork-test-1")
 
                 with conn.cursor() as cur:
                     cur.execute("select count(*) as count from opportunities")
@@ -351,27 +331,28 @@ class DbIntegrationTests(unittest.TestCase):
 
     def test_provider_collectors_upsert_and_skip_duplicates(self) -> None:
         with connect_test() as conn:
+            store = PostgresJobStore(conn)
             first_dou = collect_provider_run(
-                "dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "dou", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             second_dou = collect_provider_run(
-                "dou", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "dou", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             first_workua = collect_provider_run(
-                "workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "workua", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             second_workua = collect_provider_run(
-                "workua", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "workua", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             first_djinni = collect_provider_run(
-                "djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "djinni", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             second_djinni = collect_provider_run(
-                "djinni", conn=conn, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
+                "djinni", store=store, dry_run=False, fixture_dir=FIXTURE_DIR, now=FIXTURE_NOW, detail_limit=1
             )
             first_greenhouse = collect_provider_run(
                 "greenhouse",
-                conn=conn,
+                store=store,
                 dry_run=False,
                 fixture_dir=FIXTURE_DIR,
                 now=FIXTURE_NOW,
@@ -380,7 +361,7 @@ class DbIntegrationTests(unittest.TestCase):
             )
             second_greenhouse = collect_provider_run(
                 "greenhouse",
-                conn=conn,
+                store=store,
                 dry_run=False,
                 fixture_dir=FIXTURE_DIR,
                 now=FIXTURE_NOW,

@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker import automation
 from jobtracker.app_config.loader import AppConfig, load_app_config
 from jobtracker.app_config.schema import ConfigValidationError
@@ -25,6 +28,7 @@ from jobtracker.automation import (
     validate_config,
 )
 from jobtracker.config import Settings
+from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO_ROOT / "jobtracker" / "fixtures" / "provider_fetch"
@@ -52,7 +56,6 @@ def settings(**overrides) -> Settings:
         "secret_key": None,
         "service_role_key": None,
         "storage_bucket": "job-artifacts",
-        "store_backend": "postgres",
         "artifact_backend": "local",
         "mail_folder_aliases": {},
         "own_report_senders": frozenset(),
@@ -278,15 +281,21 @@ class RunDoctorTests(ScaffoldedRootTestCase):
 class ConnectivityCheckTests(unittest.TestCase):
     def test_database_check_reports_an_unconfigured_url(self) -> None:
         with mock.patch.object(automation, "load_settings", return_value=settings()):
-            self.assertEqual(
-                check_db_connectivity(),
-                ["database: JOBTRACKER_DATABASE_URL is not configured"],
-            )
+            with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": ""}):
+                self.assertEqual(
+                    check_db_connectivity({"backend": "postgres", "connector": "postgres_direct"}),
+                    ["database: postgres_direct needs JOBTRACKER_DATABASE_URL"],
+                )
 
     def test_database_check_wraps_connection_errors(self) -> None:
+        from jobtracker.store.connectors import postgres_direct
+
         with mock.patch.object(automation, "load_settings", return_value=settings(db_url="postgres://x")):
-            with mock.patch.object(automation, "connect", side_effect=RuntimeError("connection refused")):
-                issues = check_db_connectivity()
+            with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": "postgres://x"}):
+                with mock.patch.object(
+                    postgres_direct, "connect", side_effect=RuntimeError("connection refused")
+                ):
+                    issues = check_db_connectivity({"backend": "postgres", "connector": "postgres_direct"})
 
         self.assertEqual(issues, ["database: connection refused"])
 
@@ -462,3 +471,45 @@ class RunPipelineTests(ScaffoldedRootTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
+    """A run either lands in the shared store and is verified, or says pending_sync."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.scaffold()
+        self.write_profile_documents()
+        config_path = self.root / "config/jobsearch.toml"
+        content = config_path.read_text(encoding="utf-8").replace(
+            'backend = "sqlite"', 'backend = "postgres"'
+        )
+        config_path.write_text(content, encoding="utf-8")
+        patcher = mock.patch.dict(os.environ, {"JOBTRACKER_STORE_CONNECTOR": "postgres_direct"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_unreachable_database_is_an_error_with_no_local_copy(self) -> None:
+        from jobtracker.db import MissingConfigurationError, MissingDependencyError
+
+        env = {"JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1"}
+        with mock.patch.dict(os.environ, env):
+            # Without psycopg installed the direct connector fails earlier, which is also an error.
+            with self.assertRaises((MissingConfigurationError, MissingDependencyError)):
+                run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
+        self.assertFalse((self.root / "outputs/jobsearch.sqlite3").exists())
+        self.assertFalse((self.root / "outputs/automation-state").exists())
+
+    @unittest.skipUnless(test_db_reachable(), SKIP_REASON)
+    def test_postgres_run_is_verified_and_prunes_intermediates(self) -> None:
+        prepare_test_database()
+        with mock.patch.dict(os.environ, {"JOBTRACKER_DATABASE_URL": os.environ["SUPABASE_TEST_DB_URL"]}):
+            result = run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
+        self.assertEqual(result["persistence"], "stored")
+        self.assertEqual(result["store"]["backend"], "postgres")
+        self.assertTrue(result["stored"][0]["verified"])
+        provider_run = result["manifest"]["provider_runs"][0]
+        self.assertFalse(Path(provider_run["payload_path"]).exists())
+        self.assertFalse(Path(provider_run["normalized_payload_path"]).exists())
+        self.assertTrue(Path(provider_run["deduped_payload_path"]).exists())
+        self.assertEqual(result["pruned"]["current_run"]["deleted"], 2)

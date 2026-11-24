@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,7 @@ from .schema import ConfigValidationError, validate_jobsearch_config
 DEFAULT_CONFIG_PATH = Path("config/jobsearch.toml")
 EXAMPLE_CONFIG_PATH = Path("config/jobsearch.example.toml")
 LOCAL_CONFIG_SUFFIX = ".local.toml"
+STORE_CONNECTOR_ENV = "JOBTRACKER_STORE_CONNECTOR"
 
 
 @dataclass(frozen=True)
@@ -91,7 +93,14 @@ def load_app_config(
 
     merged = _load_toml(primary)
     local_path = primary.with_name(primary.stem + LOCAL_CONFIG_SUFFIX)
-    merged = _deep_merge(merged, _load_toml(local_path))
+    local = _load_toml(local_path)
+    blocked = sorted(set((local.get("store") or {})) & {"backend", "connector", "hosting"})
+    if blocked:
+        raise ConfigValidationError(
+            f"{local_path.name} must not set store.{', store.'.join(blocked)}: the database choice belongs in "
+            "config/jobsearch.toml; the connector comes from JOBTRACKER_STORE_CONNECTOR."
+        )
+    merged = _deep_merge(merged, local)
     if "schema_version" not in merged:
         warnings.warn(
             "Config without schema_version is deprecated; add schema_version = 1 before v0.3",
@@ -99,6 +108,7 @@ def load_app_config(
             stacklevel=2,
         )
     validated = validate_jobsearch_config(merged)
+    _apply_environment_connector(validated["store"])
     sources = [primary]
     if local_path.exists():
         sources.append(local_path)
@@ -114,3 +124,31 @@ def load_app_config(
         sources=sources,
         calendar=validated["calendar"],
     )
+
+
+def _apply_environment_connector(store: dict[str, Any]) -> None:
+    """Take the connector from this environment's JOBTRACKER_STORE_CONNECTOR; never from files.
+
+    The repository config stays environment-agnostic (which database, where it is
+    hosted). How this particular environment reaches it is the environment's own
+    setting. There is no default connector.
+    """
+    from ..config import load_env_file
+
+    load_env_file()
+    name = (os.getenv(STORE_CONNECTOR_ENV) or "").strip().lower()
+    if store.get("backend") != "postgres":
+        if name:
+            raise ConfigValidationError(
+                f"{STORE_CONNECTOR_ENV}={name!r} is set, but store.backend is {store.get('backend')!r}; "
+                "connectors apply only to the PostgreSQL store."
+            )
+        return
+    if not name:
+        raise ConfigValidationError(
+            f"{STORE_CONNECTOR_ENV} is not set in this environment. The PostgreSQL store needs exactly one "
+            "connector per environment (for example postgres_direct or supabase_https). Run "
+            "`jobtracker probe-environment` to see which connectors this environment can use."
+        )
+    store["connector"] = name
+    store["connector_source"] = STORE_CONNECTOR_ENV

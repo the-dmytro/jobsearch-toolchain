@@ -14,7 +14,6 @@ from jobtracker.core.connectors import ConnectorSpec
 from jobtracker.core.errors import UnknownConnectorError
 from jobtracker.core.models import CollectionContext, CollectionResult, ConnectorBuildContext, FetchMetrics
 from jobtracker.core.registry import Registry
-from jobtracker.payloads import upsert_run_payload
 from jobtracker.sources.base import JobSource
 from jobtracker.sources.generic.csv import CsvSource
 from jobtracker.sources.generic.html import HtmlSource
@@ -28,10 +27,7 @@ from jobtracker.store.base import JobStore
 from jobtracker.utils import normalize_space, slugify, utc_now
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_PROFILE_TARGETS = _REPO_ROOT / "profile" / "provider_targets.toml"
 _FIXTURE_TARGETS = Path(__file__).resolve().parents[1] / "fixtures" / "provider_targets.toml"
-TARGETS_PATH = _PROFILE_TARGETS if _PROFILE_TARGETS.exists() else _FIXTURE_TARGETS
-DEFAULT_JOBSEARCH_CONFIG = _REPO_ROOT / "config" / "jobsearch.toml"
 
 source_registry: Registry[Any] = Registry("source")
 
@@ -54,15 +50,28 @@ def register_source(cls: T) -> T:
     return cls
 
 
-def _load_targets(path: str | Path | None = None, *, root: Path | None = None) -> dict[str, Any]:
+def _load_targets(
+    path: str | Path | None = None, *, root: Path | None = None, fixture_mode: bool = False
+) -> dict[str, Any]:
+    """Load provider targets from an explicit path or the selected root's profile.
+
+    Bundled fixture targets are used only in fixture mode; a missing private targets
+    file is an error, never silently replaced by example companies.
+    """
     selected = path or os.getenv("JOBTRACKER_PROVIDER_TARGETS")
     if selected:
         target_path = Path(selected)
         if root and not target_path.is_absolute():
             target_path = root / target_path
     else:
-        rooted = (root / "profile/provider_targets.toml") if root else None
-        target_path = rooted if rooted and rooted.exists() else TARGETS_PATH
+        target_path = (root or _REPO_ROOT) / "profile/provider_targets.toml"
+        if not target_path.exists():
+            if not fixture_mode:
+                raise ValueError(
+                    f"Provider targets not found at {target_path}. Create it from "
+                    "profile/templates/generic/provider_targets.toml or pass --targets."
+                )
+            target_path = _FIXTURE_TARGETS
     return tomllib.loads(target_path.read_text(encoding="utf-8"))
 
 
@@ -71,33 +80,21 @@ def _load_jobsearch_sources(
     config_path: str | Path | None = None,
     root: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
+    """Configured ``[sources]`` from the project config, read by the one config loader.
+
+    Without a config file there are no configured sources (built-in services still
+    work); the bundled example config is never used in its place.
+    """
+    from jobtracker.app_config.loader import load_app_config
+
     project_root = root or _REPO_ROOT
     path = Path(config_path) if config_path else project_root / "config" / "jobsearch.toml"
     if not path.is_absolute():
         path = project_root / path
     if not path.exists():
-        example = project_root / "config" / "jobsearch.example.toml"
-        path = example if example.exists() else path
-    if not path.exists():
         return {}
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    sources_raw = data.get("sources") or {}
-    if not isinstance(sources_raw, dict):
-        return {}
-    result: dict[str, dict[str, Any]] = {}
-    for slug, config in sources_raw.items():
-        if isinstance(config, dict):
-            result[slugify(str(slug))] = dict(config)
-    local_path = path.with_name(path.stem + ".local.toml")
-    if local_path.exists():
-        local_data = tomllib.loads(local_path.read_text(encoding="utf-8"))
-        local_sources = local_data.get("sources") or {}
-        if isinstance(local_sources, dict):
-            for slug, config in local_sources.items():
-                if isinstance(config, dict):
-                    key = slugify(str(slug))
-                    result[key] = {**result.get(key, {}), **config}
-    return result
+    config = load_app_config(path, root=project_root)
+    return {slugify(slug): dict(value) for slug, value in config.source_configs.items()}
 
 
 def _normalize_kind(kind: str | None) -> str | None:
@@ -184,7 +181,6 @@ def _merge_options(
 def collect_provider_run(
     provider_slug: str,
     *,
-    conn: Any | None = None,
     dry_run: bool,
     payload_out: str | Path | None = None,
     fixture_dir: str | Path | None = None,
@@ -200,8 +196,10 @@ def collect_provider_run(
     store: JobStore | None = None,
 ) -> CollectionResult:
     provider_slug = slugify(provider_slug)
+    # Seen-before lookups use the configured store's connection (PostgreSQL only).
+    conn = getattr(store, "conn", None) if store is not None else None
     project_root = Path(root) if root else None
-    targets = _load_targets(targets_path, root=project_root)
+    targets = _load_targets(targets_path, root=project_root, fixture_mode=fixture_dir is not None)
     connectors = _load_jobsearch_sources(config_path=config_path, root=project_root)
     source_config = dict(connectors.get(provider_slug) or {})
     metrics = FetchMetrics()
@@ -293,11 +291,12 @@ def collect_provider_run(
     if not dry_run:
         if not output_path:
             output_path = _write_payload(_payload_path(provider_slug, run_key, None), payload)
-        if store is not None:
-            result = store.upsert_run_payload(provider_slug, str(output_path))
-            persisted_result = vars(result)
-        else:
-            persisted_result = upsert_run_payload(conn, provider_slug, output_path)
+        if store is None:
+            raise ValueError(
+                "Persisting a collected run needs the configured store; open it with open_job_store "
+                "or use dry_run=True."
+            )
+        persisted_result = vars(store.upsert_run_payload(provider_slug, str(output_path)))
         persisted = True
 
     return CollectionResult(
@@ -330,7 +329,6 @@ def benchmark_providers(
         try:
             result = collect_provider_run(
                 provider,
-                conn=None,
                 dry_run=True,
                 payload_out=None,
                 fixture_dir=None if live else fixture_dir or FIXTURE_ROOT,

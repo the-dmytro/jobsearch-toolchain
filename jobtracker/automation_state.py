@@ -19,8 +19,13 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=json_default, sort_keys=True)
 
 
+DEFAULT_STATE_DB = "outputs/automation-state/state.sqlite"
+
+
 class AutomationStateStore:
-    def __init__(self, path: str | Path = "outputs/automation-state/state.sqlite") -> None:
+    backend = "sqlite"
+
+    def __init__(self, path: str | Path = DEFAULT_STATE_DB) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
@@ -262,6 +267,19 @@ class AutomationStateStore:
                 (error, now, idempotency_key),
             )
 
+    def pending_runs(self) -> list[dict[str, Any]]:
+        """Journaled runs that have not been confirmed in the shared database."""
+        with self._session() as conn:
+            rows = conn.execute(
+                """
+                select run_key, provider, payload_path, sync_attempts, last_error, updated_at
+                from run_sync_state
+                where db_synced_at is null
+                order by updated_at
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def is_run_db_synced(self, run_key: str) -> bool:
         with self._session() as conn:
             row = conn.execute(
@@ -321,3 +339,277 @@ class AutomationStateStore:
                 """,
                 (run_key, provider, event_type, message, _json(metadata or {}), _utc_iso()),
             )
+
+
+_STAGE_COLUMNS = {
+    "evaluation": "evaluated_at",
+    "evaluated": "evaluated_at",
+    "email": "emailed_at",
+    "emailed": "emailed_at",
+    "db": "db_synced_at",
+    "db_synced": "db_synced_at",
+}
+_MARK_COLUMNS = {"evaluated": "evaluated_at", "emailed": "emailed_at", "db_synced": "db_synced_at"}
+_HEAVY_STATE_KEYS = frozenset({"raw_text", "text", "html", "body", "body_html"})
+
+
+class PostgresAutomationStateStore:
+    """Shared automation state in PostgreSQL, so every environment sees the same history.
+
+    Uses ``source_items`` processing columns, ``email_notifications`` and
+    ``automation_run_events`` from migration 004. Message bodies are never stored here;
+    only a SHA-256 of the body is kept for change detection.
+    """
+
+    backend = "postgres"
+
+    def __init__(self, conn: Any) -> None:
+        self.conn = conn
+        self.path = None
+
+    def _provider_id(self, provider: str) -> Any:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into providers(slug, name) values (%s, %s)
+                on conflict(slug) do update set updated_at = now()
+                returning id
+                """,
+                (provider, provider.replace("_", " ").replace("-", " ").title()),
+            )
+            return cur.fetchone()["id"]
+
+    def _run_id(self, run_key: str | None) -> Any:
+        if not run_key:
+            return None
+        with self.conn.cursor() as cur:
+            cur.execute("select id from automation_runs where run_key = %s", (run_key,))
+            row = cur.fetchone()
+        return row["id"] if row else None
+
+    def upsert_source_items(self, provider: str, items: list[dict[str, Any]]) -> dict[str, int]:
+        count = 0
+        with self.conn.transaction():
+            provider_id = self._provider_id(provider)
+            for item in items:
+                source_type = normalize_space(item.get("source_type")) or "email"
+                external_id = normalize_space(
+                    item.get("external_id") or item.get("message_id") or item.get("id")
+                )
+                if not external_id:
+                    continue
+                body = normalize_space(
+                    item.get("raw_text") or item.get("text") or item.get("summary") or item.get("snippet")
+                )
+                facts = {key: value for key, value in item.items() if key not in _HEAVY_STATE_KEYS}
+                with self.conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        insert into source_items(
+                          provider_id, source_type, external_id, source_url, title, summary,
+                          body_sha256, fetched_at, processing_status, metadata
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, now(), 'fetched', %s::jsonb)
+                        on conflict(provider_id, source_type, external_id) where external_id is not null
+                        do update set
+                          source_url = coalesce(excluded.source_url, source_items.source_url),
+                          title = coalesce(excluded.title, source_items.title),
+                          body_sha256 = coalesce(excluded.body_sha256, source_items.body_sha256),
+                          fetched_at = coalesce(source_items.fetched_at, excluded.fetched_at),
+                          metadata = (source_items.metadata - 'payload') || excluded.metadata,
+                          updated_at = now()
+                        """,
+                        (
+                            provider_id,
+                            source_type,
+                            external_id,
+                            normalize_space(
+                                item.get("source_url") or item.get("url") or item.get("gmail_link")
+                            )
+                            or None,
+                            normalize_space(item.get("subject") or item.get("title")) or None,
+                            normalize_space(item.get("summary") or item.get("snippet"))[:500] or None,
+                            sha256_text(body) if body else None,
+                            _json({"state": compact_state(facts)}),
+                        ),
+                    )
+                count += 1
+        return {"upserted": count}
+
+    def pending_source_items(
+        self, provider: str, stage: str, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        column = _STAGE_COLUMNS.get(stage)
+        if not column:
+            raise ValueError(f"Unsupported source stage: {stage}")
+        sql = f"""
+            select si.source_type, si.external_id, si.source_url, si.title as subject,
+                   si.body_sha256, si.fetched_at, si.evaluated_at, si.emailed_at, si.db_synced_at
+            from source_items si
+            join providers p on p.id = si.provider_id
+            where p.slug = %s and si.fetched_at is not null and si.{column} is null
+            order by coalesce(si.source_timestamp, si.fetched_at), si.external_id
+        """
+        params: list[Any] = [provider]
+        if limit is not None:
+            sql += " limit %s"
+            params.append(limit)
+        with self.conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
+
+    def mark_source_stage(self, provider: str, source_type: str, external_id: str, stage: str) -> None:
+        column = _MARK_COLUMNS.get(stage)
+        if not column:
+            raise ValueError(f"Unsupported source stage: {stage}")
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                update source_items si
+                set {column} = now(), processing_status = %s, processing_error = null, updated_at = now()
+                from providers p
+                where p.id = si.provider_id and p.slug = %s and si.source_type = %s and si.external_id = %s
+                """,
+                (stage, provider, source_type, external_id),
+            )
+
+    def reserve_email(
+        self,
+        idempotency_key: str,
+        provider: str,
+        run_key: str,
+        to_address: str,
+        subject: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        with self.conn.transaction():
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "select status from email_notifications where idempotency_key = %s for update",
+                    (idempotency_key,),
+                )
+                row = cur.fetchone()
+                if row and row["status"] in {"reserved", "sent"}:
+                    return False
+                if row:
+                    cur.execute(
+                        """
+                        update email_notifications
+                        set status = 'reserved', attempts = attempts + 1, last_error = null, updated_at = now()
+                        where idempotency_key = %s
+                        """,
+                        (idempotency_key,),
+                    )
+                    return True
+            provider_id = self._provider_id(provider)
+            run_id = self._run_id(run_key)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into email_notifications(
+                      provider_id, automation_run_id, idempotency_key, to_address, subject,
+                      status, attempts, metadata
+                    )
+                    values (%s, %s, %s, %s, %s, 'reserved', 1, %s::jsonb)
+                    on conflict(idempotency_key) do nothing
+                    returning id
+                    """,
+                    (
+                        provider_id,
+                        run_id,
+                        idempotency_key,
+                        to_address,
+                        subject,
+                        _json({"run_key": run_key, **(metadata or {})}),
+                    ),
+                )
+                return cur.fetchone() is not None
+
+    def mark_email_sent(self, idempotency_key: str) -> None:
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute(
+                """
+                update email_notifications
+                set status = 'sent', sent_at = now(), last_error = null, updated_at = now()
+                where idempotency_key = %s
+                """,
+                (idempotency_key,),
+            )
+
+    def mark_email_failed(self, idempotency_key: str, error: str) -> None:
+        with self.conn.transaction(), self.conn.cursor() as cur:
+            cur.execute(
+                """
+                update email_notifications
+                set status = 'failed', last_error = %s, updated_at = now()
+                where idempotency_key = %s
+                """,
+                (error, idempotency_key),
+            )
+
+    def is_run_db_synced(self, run_key: str) -> bool:
+        return self._run_id(run_key) is not None
+
+    def mark_run_sync_attempt(
+        self, provider: str, run_key: str, payload_path: str, error: str | None = None
+    ) -> None:
+        if error:
+            self.record_run_event(provider, run_key, "db_sync_failed", error, {"payload_path": payload_path})
+
+    def mark_run_db_synced(self, provider: str, run_key: str, payload_path: str) -> None:
+        self.record_run_event(provider, run_key, "db_synced", None, {"payload_path": payload_path})
+
+    def record_run_event(
+        self,
+        provider: str,
+        run_key: str | None,
+        event_type: str,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.conn.transaction():
+            provider_id = self._provider_id(provider)
+            run_id = self._run_id(run_key)
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into automation_run_events(
+                      provider_id, automation_run_id, run_key, event_type, message, metadata
+                    )
+                    values (%s, %s, %s, %s, %s, %s::jsonb)
+                    """,
+                    (provider_id, run_id, run_key, event_type, message, _json(metadata or {})),
+                )
+
+
+def compact_state(value: dict[str, Any], limit: int = 500) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if isinstance(item, str) and len(item) > limit:
+            result[key] = item[: limit - 1] + "…"
+        elif isinstance(item, (str, int, float, bool)) or item is None:
+            result[key] = item
+        elif isinstance(item, (list, dict)) and len(_json(item)) <= limit:
+            result[key] = item
+    return result
+
+
+@contextmanager
+def open_automation_state(store_options: dict[str, Any], *, sqlite_path: str | Path) -> Iterator[Any]:
+    """Automation state lives in the configured store; there is no second location.
+
+    ``store.backend = "postgres"`` keeps it in PostgreSQL (shared by every environment);
+    ``"sqlite"`` keeps it in the local SQLite state file.
+    """
+    from .db import MissingConfigurationError
+    from .store.registry import canonical_backend, connect_postgres
+
+    backend = canonical_backend(store_options.get("backend"))
+    if backend == "postgres":
+        with connect_postgres(store_options) as conn:
+            yield PostgresAutomationStateStore(conn)
+        return
+    if backend == "sqlite":
+        yield AutomationStateStore(sqlite_path)
+        return
+    raise MissingConfigurationError(f"Automation state is not supported for store backend {backend!r}")

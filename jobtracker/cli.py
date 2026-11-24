@@ -8,10 +8,11 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from .app_config.loader import load_app_config
 from .automation import run_doctor, run_pipeline, scaffold_config
-from .automation_state import AutomationStateStore
+from .automation_state import DEFAULT_STATE_DB, AutomationStateStore, open_automation_state
 from .calendar.base import CalendarInfo
 from .calendar.base import calendar_url as resolve_calendar_url
 from .calendar.events import CalendarService, build_reply, ics_to_specs, key_to_uid, settings_from_options
@@ -19,8 +20,9 @@ from .calendar.ical import aware, serialize
 from .calendar.mail import parse_message
 from .calendar.registry import build_calendar_backend
 from .calendar.reply import send_reply
+from .cli_portability import register as register_portability
 from .config import load_env_file
-from .db import MissingConfigurationError, MissingDependencyError, connect, connect_test
+from .db import MissingConfigurationError, MissingDependencyError, connect_test
 from .dedupe import LocalDedupeIndex, apply_db_dedupe_matches, dedupe_payload
 from .gmail_imap import MAIL_FOLDER_ALIASES, MailImapClient, filter_provider_messages, resolve_mail_folder
 from .greenhouse_import import import_greenhouse_tracking, summarize_greenhouse_tracking
@@ -31,12 +33,13 @@ from .mail.base import OutgoingMessage
 from .mail.generic.smtp import SmtpMailSender
 from .mail.registry import build_alert_parser, build_mail_inbox, build_mail_sender
 from .migrations import apply_migrations
-from .payloads import check_duplicates
+from .portability import choose_replay_files
 from .provider_fetch import benchmark_providers, collect_provider_run
 from .sources.registry import source_registry
-from .store.registry import open_job_store
+from .store.compact import sha256_json
+from .store.registry import canonical_backend, connect_postgres, describe_store, open_job_store
 from .upwork_email import parse_upwork_alert_payload
-from .utils import json_default, normalize_space, sha256_text, slugify
+from .utils import json_default, normalize_space, payload_run_key, sha256_text, slugify
 from .validation import validate_payload
 
 
@@ -45,7 +48,23 @@ def _print_json(value) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    result = scaffold_config(root=Path(args.root), force=args.force)
+    root = Path(args.root)
+    template = getattr(args, "template", "sqlite")
+    hosting = (getattr(args, "hosting", None) or "").strip().lower()
+    if hosting and template != "shared":
+        raise ValueError("--hosting applies only to --template shared")
+    result = scaffold_config(root=root, force=args.force, template=template)
+    if hosting:
+        config_path = root / "config" / "jobsearch.toml"
+        text = config_path.read_text(encoding="utf-8")
+        marker = '# hosting = "supabase"'
+        if marker in text:
+            config_path.write_text(text.replace(marker, f'hosting = "{hosting}"', 1), encoding="utf-8")
+            result["hosting"] = hosting
+    if template == "shared":
+        result["next_step"] = (
+            "set JOBTRACKER_STORE_CONNECTOR in each environment (see `jobtracker probe-environment`)"
+        )
     _print_json(result)
     return 0
 
@@ -77,8 +96,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _store_config(args: argparse.Namespace):
+    return load_app_config(getattr(args, "config", None), root=Path(getattr(args, "root", None) or "."))
+
+
+@contextmanager
+def _configured_postgres(args: argparse.Namespace):
+    """The PostgreSQL connection named by config; refuses when the store is not PostgreSQL."""
+    config = _store_config(args)
+    with connect_postgres(config.store) as conn:
+        yield conn
+
+
+def cmd_probe_environment(args: argparse.Namespace) -> int:
+    from .probe import format_probe, probe_environment
+
+    result = probe_environment(Path(args.root).resolve(), timeout=args.timeout)
+    if getattr(args, "format", "json") == "text":
+        print(format_probe(result))
+    else:
+        _print_json(result)
+    return 0
+
+
 def cmd_migrate(args: argparse.Namespace) -> int:
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         applied = apply_migrations(conn, dry_run=args.dry_run)
     _print_json({"dry_run": args.dry_run, "migrations": applied})
     return 0
@@ -88,7 +130,7 @@ def cmd_import_legacy(args: argparse.Namespace) -> int:
     if args.dry_run:
         _print_json(summarize_legacy_csv(args.csv, links_pdf=args.links_pdf))
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_legacy_csv(conn, args.csv, links_pdf=args.links_pdf)
     _print_json(result)
     return 0
@@ -119,7 +161,7 @@ def cmd_import_linkedin_tracking(args: argparse.Namespace) -> int:
             )
         )
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_linkedin_tracking(
             conn,
             jobs_csv=args.jobs_csv,
@@ -136,7 +178,7 @@ def cmd_import_greenhouse(args: argparse.Namespace) -> int:
     if args.dry_run:
         _print_json(summarize_greenhouse_tracking(args.csv, as_of=as_of))
         return 0
-    with connect() as conn:
+    with _configured_postgres(args) as conn:
         result = import_greenhouse_tracking(conn, csv_path=args.csv, as_of=as_of)
     _print_json(result)
     return 0
@@ -146,9 +188,14 @@ def cmd_upsert_run(args: argparse.Namespace) -> int:
     config = load_app_config(getattr(args, "config", None), root=Path(getattr(args, "root", None) or "."))
     payload_path = config.resolve_path(args.payload)
     report_path = str(config.resolve_path(args.report)) if args.report else None
+    receipt = describe_store(config.store, root=config.root)
     with open_job_store(config.store, root=config.root) as store:
         result = store.upsert_run_payload(args.provider, str(payload_path), report_path=report_path)
-    _print_json(vars(result))
+        verify = getattr(store, "verify_run", None)
+        readback = verify(result.run_key) if verify else None
+    if verify and not readback:
+        raise RuntimeError(f"Readback failed: run {result.run_key} is not in the {receipt['backend']} store")
+    _print_json({**vars(result), "persistence": "stored", "store": receipt, "verified": bool(readback)})
     return 0
 
 
@@ -174,8 +221,16 @@ def cmd_export_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_db_smoke(args: argparse.Namespace) -> int:
-    connector = connect_test if args.test else connect
-    with connector() as conn:
+    if args.test:
+        connection = connect_test()
+        target = {"target": "SUPABASE_TEST_DB_URL"}
+    else:
+        config = _store_config(args)
+        if args.write_test and config.store.get("connector") == "supabase_https":
+            raise ValueError("--write-test needs a rollback, which the supabase_https connector cannot do")
+        connection = connect_postgres(config.store)
+        target = describe_store(config.store, root=config.root)
+    with connection as conn:
         with conn.cursor() as cur:
             cur.execute("select current_database() as database, current_user as user")
             result = cur.fetchone()
@@ -202,7 +257,7 @@ def cmd_db_smoke(args: argparse.Namespace) -> int:
                 conn.rollback()
     _print_json(
         {
-            "target": "SUPABASE_TEST_DB_URL" if args.test else "SUPABASE_DB_URL",
+            "target": target,
             "connection": result,
             "write_test": write_result,
         }
@@ -231,7 +286,7 @@ def cmd_build_local_index(args: argparse.Namespace) -> int:
 
 def cmd_dedupe_candidates(args: argparse.Namespace) -> int:
     payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
-    run_key = _payload_run_key(payload)
+    run_key = payload_run_key(payload)
     index = LocalDedupeIndex.from_payload_dir(
         args.payload_dir,
         now=args.now,
@@ -241,14 +296,18 @@ def cmd_dedupe_candidates(args: argparse.Namespace) -> int:
     enriched = dedupe_payload(payload, provider=args.provider, index=index)
     if args.include_db:
         matches_by_external_id: dict[str, list[dict]] = {}
-        with connect() as conn:
+        config = _store_config(args)
+        with open_job_store(config.store, root=config.root) as store:
             for item in enriched.get("opportunities") or []:
                 if not isinstance(item, dict):
                     continue
                 external_id = normalize_space(item.get("external_id"))
-                matches = check_duplicates(
-                    conn, args.provider, item.get("company"), item.get("title"), external_id=external_id
-                )
+                matches = [
+                    match.as_dict()
+                    for match in store.check_duplicates(
+                        args.provider, item.get("company"), item.get("title"), external_id=external_id
+                    )
+                ]
                 if external_id and matches:
                     matches_by_external_id[external_id] = matches
         enriched = apply_db_dedupe_matches(
@@ -302,8 +361,12 @@ def cmd_fetch_mail_folder(args: argparse.Namespace) -> int:
     state_db = Path(args.state_db)
     if not state_db.is_absolute():
         state_db = root / state_db
-    store = AutomationStateStore(state_db)
-    state_result = store.upsert_source_items(provider, source_items)
+    if config is None:
+        raise MissingConfigurationError(
+            "fetch-mail-folder records processing state in the configured store; config/jobsearch.toml is required."
+        )
+    with open_automation_state(config.store, sqlite_path=state_db) as store:
+        state_result = {**store.upsert_source_items(provider, source_items), "state_store": store.backend}
     skipped = (
         0 if args.no_provider_filter else (skipped_by_filter if parser_config else filter_result.skipped)
     )
@@ -371,7 +434,19 @@ def cmd_send_report_email(args: argparse.Namespace) -> int:
     state_db = Path(args.state_db)
     if not state_db.is_absolute():
         state_db = root / state_db
-    store = AutomationStateStore(state_db)
+    if config is None:
+        raise MissingConfigurationError(
+            "send-report-email records sent reports in the configured store; config/jobsearch.toml is required."
+        )
+    with open_automation_state(config.store, sqlite_path=state_db) as store:
+        return _send_report_email_with_state(
+            args, config, store, key, provider, run_key, to_address, from_address, body
+        )
+
+
+def _send_report_email_with_state(
+    args, config, store, key, provider, run_key, to_address, from_address, body
+) -> int:
     if not store.reserve_email(
         key, provider=provider, run_key=run_key, to_address=to_address, subject=args.subject
     ):
@@ -381,6 +456,7 @@ def cmd_send_report_email(args: argparse.Namespace) -> int:
                 "skipped": True,
                 "reason": "email idempotency key already reserved or sent",
                 "idempotency_key": key,
+                "state_store": store.backend,
             }
         )
         return 0
@@ -402,7 +478,15 @@ def cmd_send_report_email(args: argparse.Namespace) -> int:
         store.mark_email_failed(key, str(exc))
         raise
     store.mark_email_sent(key)
-    _print_json({"sent": True, "idempotency_key": key, "to": to_address, "subject": args.subject})
+    _print_json(
+        {
+            "sent": True,
+            "idempotency_key": key,
+            "to": to_address,
+            "subject": args.subject,
+            "state_store": store.backend,
+        }
+    )
     return 0
 
 
@@ -432,18 +516,31 @@ def _open_mail_inbox(args: argparse.Namespace):
         yield inbox
 
 
-def _payload_run_key(payload: dict) -> str | None:
-    run = payload.get("run") if isinstance(payload.get("run"), dict) else {}
-    return normalize_space(run.get("run_key") or payload.get("run_key")) or None
-
-
 def _provider_from_payload(path: Path, payload: dict, explicit_provider: str | None) -> str:
     if explicit_provider:
         return slugify(explicit_provider)
-    run_key = _payload_run_key(payload)
+    run_key = payload_run_key(payload)
     if run_key and "-" in run_key:
         return slugify(run_key.split("-", 1)[0])
     return slugify(path.stem.split(".", 1)[0])
+
+
+def _commit_store(store: Any) -> None:
+    """Commit what the store has written so far; stores without transactions have nothing to do."""
+    commit = getattr(store, "commit", None)
+    if commit:
+        commit()
+
+
+def _rollback_store(store: Any) -> None:
+    rollback = getattr(store, "rollback", None)
+    if rollback:
+        rollback()
+
+
+def _end_read_transaction(store: Any) -> None:
+    """Close the implicit transaction a read opened so the next write starts from a clean connection."""
+    _commit_store(store)
 
 
 def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
@@ -455,10 +552,18 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     if not state_db.is_absolute():
         state_db = root / state_db
     target_store = getattr(args, "target_store", "postgres")
+    config = None if args.dry_run else _store_config(args)
+    if config is not None and canonical_backend(config.store.get("backend")) != target_store:
+        raise MissingConfigurationError(
+            f"sync-pending-runs writes to the configured store; set [store].backend = {target_store!r} "
+            "(with its connector) before replaying."
+        )
     payload_paths = sorted(payload_dir.rglob("*.payload.json"))
     synced = 0
     skipped = 0
+    hashes_recorded = 0
     failed: list[dict[str, str]] = []
+    conflicts: list[dict[str, Any]] = []
     if not payload_paths:
         _print_json(
             {
@@ -472,16 +577,17 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
         )
         return 0
     state = AutomationStateStore(state_db)
-    target_context = (
-        nullcontext(None) if args.dry_run else open_job_store({"backend": target_store}, root=root)
-    )
-    with target_context as target:
-        for payload_path in payload_paths:
-            payload = json.loads(payload_path.read_text(encoding="utf-8"))
-            run_key = _payload_run_key(payload)
-            if not run_key:
+    target_context = nullcontext(None) if args.dry_run else open_job_store(config.store, root=config.root)
+    selected = choose_replay_files(payload_paths)
+    for payload_path in payload_paths:
+        try:
+            if not payload_run_key(json.loads(payload_path.read_text(encoding="utf-8"))):
                 failed.append({"payload": str(payload_path), "error": "missing run_key"})
-                continue
+        except ValueError as exc:
+            failed.append({"payload": str(payload_path), "error": f"invalid JSON: {exc}"})
+    with target_context as target:
+        for run_key, payload_path in sorted(selected.items()):
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
             provider = _provider_from_payload(payload_path, payload, args.provider)
             if args.provider and provider != slugify(args.provider):
                 continue
@@ -491,12 +597,65 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
             if args.dry_run:
                 skipped += 1
                 continue
+            verify = getattr(target, "verify_run", None)
+            existing = verify(run_key) if verify else None
+            _end_read_transaction(target)
+            if existing and not getattr(args, "overwrite_richer", False):
+                local_opportunities = payload.get("opportunities") or payload.get("jobs") or []
+                local_evaluations = sum(
+                    1 for item in local_opportunities if isinstance(item, dict) and item.get("evaluation")
+                )
+                payload_sha = sha256_json(payload)
+                stored_sha = existing.get("payload_sha256")
+                if stored_sha == payload_sha:
+                    state.mark_run_db_synced(provider, run_key, str(payload_path))
+                    skipped += 1
+                    continue
+                record_payload_sha = getattr(target, "record_payload_sha256", None)
+                if (
+                    not stored_sha
+                    and record_payload_sha
+                    and int(existing.get("opportunities_count") or 0) == len(local_opportunities)
+                    and int(existing.get("evaluations_count") or 0) == local_evaluations
+                ):
+                    # Stored before payload hashes existed and the counts agree: remember the hash
+                    # instead of rewriting the run on every replay.
+                    try:
+                        record_payload_sha(run_key, payload_sha)
+                        _commit_store(target)
+                    except Exception as exc:
+                        _rollback_store(target)
+                        failed.append({"payload": str(payload_path), "run_key": run_key, "error": str(exc)})
+                        continue
+                    state.mark_run_db_synced(provider, run_key, str(payload_path))
+                    skipped += 1
+                    hashes_recorded += 1
+                    continue
+                if int(existing.get("evaluations_count") or 0) > local_evaluations:
+                    conflicts.append(
+                        {
+                            "run_key": run_key,
+                            "payload": str(payload_path),
+                            "reason": "database run has more evaluations than this local file; not overwritten",
+                            "db_evaluations": int(existing.get("evaluations_count") or 0),
+                            "local_evaluations": local_evaluations,
+                        }
+                    )
+                    continue
             try:
                 state.mark_run_sync_attempt(provider, run_key, str(payload_path))
                 target.upsert_run_payload(provider, str(payload_path))
+                # Commit this run before reading it back and marking it synced: the local state
+                # database is not part of the store's transaction, so an interrupted replay must
+                # never leave a "synced" mark for a write that was not committed.
+                _commit_store(target)
+                if verify and not verify(run_key):
+                    raise RuntimeError(f"readback failed for {run_key}")
+                _end_read_transaction(target)
                 state.mark_run_db_synced(provider, run_key, str(payload_path))
                 synced += 1
             except Exception as exc:
+                _rollback_store(target)
                 state.mark_run_sync_attempt(provider, run_key, str(payload_path), error=str(exc))
                 state.record_run_event(
                     provider, run_key, "db_sync_failed", str(exc), {"payload_path": str(payload_path)}
@@ -508,11 +667,13 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
             "target_store": target_store,
             "synced": synced,
             "skipped": skipped,
+            "hashes_recorded": hashes_recorded,
+            "conflicts": conflicts,
             "failed": failed,
             "dry_run": args.dry_run,
         }
     )
-    return 1 if failed and not args.keep_going else 0
+    return 1 if (failed or conflicts) and not args.keep_going else 0
 
 
 def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
@@ -521,7 +682,6 @@ def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
         if args.dry_run:
             result = collect_provider_run(
                 provider_slug,
-                conn=None,
                 dry_run=True,
                 payload_out=args.payload_out,
                 fixture_dir=getattr(args, "fixture_dir", None),
@@ -533,10 +693,11 @@ def _cmd_fetch_provider(args: argparse.Namespace, provider_slug: str) -> int:
                 max_boards=getattr(args, "max_boards", None),
             )
         else:
-            with connect() as conn:
+            config = _store_config(args)
+            with open_job_store(config.store, root=config.root) as store:
                 result = collect_provider_run(
                     provider_slug,
-                    conn=conn,
+                    store=store,
                     dry_run=False,
                     payload_out=args.payload_out,
                     fixture_dir=getattr(args, "fixture_dir", None),
@@ -579,12 +740,11 @@ def cmd_fetch_source(args: argparse.Namespace) -> int:
         "detail_limit": getattr(args, "detail_limit", None),
     }
     if args.dry_run:
-        result = collect_provider_run(source_slug, conn=None, **kwargs)
+        result = collect_provider_run(source_slug, **kwargs)
     else:
         with open_job_store(config.store, root=config.root) as store:
             result = collect_provider_run(
                 source_slug,
-                conn=getattr(store, "conn", None),
                 store=store,
                 **kwargs,
             )
@@ -967,6 +1127,8 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument(
         "--dry-run", action="store_true", help="List pending migrations without applying them"
     )
+    migrate.add_argument("--root", default=".", help="Project root for relative paths")
+    migrate.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     migrate.set_defaults(func=cmd_migrate)
 
     legacy = subparsers.add_parser(
@@ -980,6 +1142,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional PDF export containing the clickable vacancy links. Defaults to a same-name .pdf next to the CSV.",
     )
     legacy.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing to DB")
+    legacy.add_argument("--root", default=".", help="Project root for relative paths")
+    legacy.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     legacy.set_defaults(func=cmd_import_legacy)
 
     linkedin = subparsers.add_parser(
@@ -1001,6 +1165,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--as-of", help="Anchor date for LinkedIn relative dates like '2mo ago', in YYYY-MM-DD format"
     )
     linkedin.add_argument("--dry-run", action="store_true", help="Parse and summarize without writing to DB")
+    linkedin.add_argument("--root", default=".", help="Project root for relative paths")
+    linkedin.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     linkedin.set_defaults(func=cmd_import_linkedin_tracking)
 
     greenhouse = subparsers.add_parser("import-greenhouse", help="Import Greenhouse application tracker CSV")
@@ -1013,6 +1179,8 @@ def build_parser() -> argparse.ArgumentParser:
     greenhouse.add_argument(
         "--dry-run", action="store_true", help="Parse and summarize without writing to DB"
     )
+    greenhouse.add_argument("--root", default=".", help="Project root for relative paths")
+    greenhouse.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     greenhouse.set_defaults(func=cmd_import_greenhouse)
 
     upsert = subparsers.add_parser("upsert-run", help="Upsert one automation run payload")
@@ -1046,6 +1214,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--test", action="store_true", help="Use SUPABASE_TEST_DB_URL instead of SUPABASE_DB_URL"
     )
     db_smoke.add_argument("--write-test", action="store_true", help="Also run a rollback-only write test")
+    db_smoke.add_argument("--root", default=".", help="Project root for relative paths")
+    db_smoke.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     db_smoke.set_defaults(func=cmd_db_smoke)
 
     validate = subparsers.add_parser("validate-payload", help="Validate and normalize an automation payload")
@@ -1082,6 +1252,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also check Supabase for existing opportunities and applications",
     )
     dedupe.add_argument("--now", help=argparse.SUPPRESS)
+    dedupe.add_argument("--root", default=".", help="Project root for relative paths")
+    dedupe.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     dedupe.set_defaults(func=cmd_dedupe_candidates)
 
     folders = subparsers.add_parser(
@@ -1118,7 +1290,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="Do not filter mixed-folder messages by provider sender/content",
         )
-        parser.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+        parser.add_argument("--state-db", default=DEFAULT_STATE_DB)
         parser.add_argument("--run-key")
         parser.add_argument("--output", help="Optional path to write fetched source payload JSON")
         parser.set_defaults(func=cmd_fetch_mail_folder)
@@ -1152,7 +1324,7 @@ def build_parser() -> argparse.ArgumentParser:
     send_email.add_argument("--subject", required=True)
     send_email.add_argument("--body-file", required=True)
     send_email.add_argument("--idempotency-key")
-    send_email.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+    send_email.add_argument("--state-db", default=DEFAULT_STATE_DB)
     send_email.add_argument("--root", default=".", help="Project root for config and relative paths")
     send_email.add_argument("--config", help="Path to jobsearch.toml")
     send_email.set_defaults(func=cmd_send_report_email)
@@ -1166,11 +1338,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing *.payload.json files",
     )
     sync.add_argument("--provider", help="Optional provider filter")
-    sync.add_argument("--state-db", default="outputs/automation-state/state.sqlite")
+    sync.add_argument("--state-db", default=DEFAULT_STATE_DB)
     sync.add_argument("--dry-run", action="store_true")
     sync.add_argument("--keep-going", action="store_true", help="Return success even if some payloads fail")
     sync.add_argument("--target-store", choices=["postgres"], default="postgres", help="Replay target store")
+    sync.add_argument(
+        "--overwrite-richer",
+        action="store_true",
+        help="Replay even when the database run has more evaluations than the local file",
+    )
     sync.add_argument("--root", default=".", help="Project root for relative paths")
+    sync.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
     sync.set_defaults(func=cmd_sync_pending_runs)
 
     def add_fetch_common(parser: argparse.ArgumentParser) -> None:
@@ -1186,15 +1364,15 @@ def build_parser() -> argparse.ArgumentParser:
         )
         parser.add_argument(
             "--targets",
-            help="Optional provider target TOML path. Defaults to profile/provider_targets.toml or jobtracker/fixtures/provider_targets.toml",
+            help="Optional provider target TOML path. Defaults to profile/provider_targets.toml under --root",
         )
         parser.add_argument("--fixture-dir", help=argparse.SUPPRESS)
         parser.add_argument("--now", help=argparse.SUPPRESS)
+        parser.add_argument("--root", default=".", help="Project root for relative paths")
+        parser.add_argument("--config", help="Path to jobsearch.toml (default: config/jobsearch.toml)")
 
     fetch_source = subparsers.add_parser("fetch-source", help="Fetch any configured or plugin source by slug")
     fetch_source.add_argument("source", help="Source slug from [sources.<slug>] or plugins")
-    fetch_source.add_argument("--root", default=".", help="Project root directory")
-    fetch_source.add_argument("--config", help="Path to jobsearch.toml")
     add_fetch_common(fetch_source)
     fetch_source.set_defaults(func=cmd_fetch_source)
 
@@ -1281,6 +1459,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_cmd = subparsers.add_parser("init", help="Scaffold config/ and profile/ from example templates")
     init_cmd.add_argument("--root", default=".", help="Project root directory")
     init_cmd.add_argument("--force", action="store_true", help="Overwrite existing scaffolded files")
+    init_cmd.add_argument(
+        "--template",
+        choices=["sqlite", "shared"],
+        default="sqlite",
+        help="sqlite: one local database file; shared: one PostgreSQL database used from several environments",
+    )
+    init_cmd.add_argument(
+        "--hosting", help="With --template shared: where the database is hosted, only if the user said so"
+    )
     init_cmd.set_defaults(func=cmd_init)
 
     doctor = subparsers.add_parser("doctor", help="Validate config, connectors, and profile placeholders")
@@ -1305,6 +1492,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.set_defaults(func=cmd_run)
 
     _add_calendar_parser(subparsers)
+
+    register_portability(subparsers)
+
+    probe = subparsers.add_parser(
+        "probe-environment", help="Report what this environment can reach and which store connectors fit"
+    )
+    probe.add_argument("--root", default=".", help="Project root directory")
+    probe.add_argument("--timeout", type=float, default=5.0, help="Seconds per network check")
+    probe.add_argument("--format", choices=["json", "text"], default="json")
+    probe.set_defaults(func=cmd_probe_environment)
 
     return parser
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,7 +15,6 @@ from .calendar.events import settings_from_options
 from .calendar.registry import build_calendar_backend
 from .config import load_settings
 from .core.models import CollectionContext, FetchMetrics
-from .db import connect
 from .jobboard_run import prepare_jobboard_run
 from .mail.generic.imap import MailImapClient
 from .mail.generic.smtp import SmtpMailSender
@@ -30,7 +29,15 @@ from .utils import normalize_space
 PROFILE_TEMPLATE_DIR = Path("profile/templates/generic")
 
 
-def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[str, Any]:
+CONFIG_TEMPLATES = {
+    "sqlite": EXAMPLE_CONFIG_PATH,
+    "shared": Path("config/jobsearch.shared.example.toml"),
+}
+
+
+def scaffold_config(
+    *, root: Path | None = None, force: bool = False, template: str = "sqlite"
+) -> dict[str, Any]:
     project_root = root or Path.cwd()
     config_dir = project_root / "config"
     profile_dir = project_root / "profile"
@@ -39,7 +46,9 @@ def scaffold_config(*, root: Path | None = None, force: bool = False) -> dict[st
 
     created: list[str] = []
     skipped: list[str] = []
-    example = project_root / EXAMPLE_CONFIG_PATH
+    if template not in CONFIG_TEMPLATES:
+        raise ValueError(f"Unknown config template {template!r}. Use one of: {', '.join(CONFIG_TEMPLATES)}")
+    example = project_root / CONFIG_TEMPLATES[template]
     target = config_dir / "jobsearch.toml"
     if target.exists() and not force:
         skipped.append(str(target))
@@ -105,14 +114,23 @@ def check_connector_health(config: AppConfig) -> dict[str, list[str]]:
     return results
 
 
-def check_db_connectivity() -> list[str]:
-    settings = load_settings()
-    if not settings.db_url:
-        return ["database: JOBTRACKER_DATABASE_URL is not configured"]
+def check_db_connectivity(store_options: dict[str, Any]) -> list[str]:
+    """Check the one database connector named in config."""
+    from .store.connectors.base import iter_settings_missing
+    from .store.registry import connect_postgres, postgres_connector
+
     try:
-        with connect() as conn:
+        connector = postgres_connector(store_options)
+        missing = list(iter_settings_missing(connector.info.settings, dict(os.environ)))
+        if connector.info.name == "postgres_direct" and load_settings().db_url:
+            missing = []  # the legacy SUPABASE_DB_URL name is still accepted
+        if missing:
+            return [f"database: {connector.info.name} needs {', '.join(missing)}"]
+        with connect_postgres(store_options) as conn:
             with conn.cursor() as cur:
-                cur.execute("select 1")
+                cur.execute("select 1 as ok")
+                cur.fetchone()
+                cur.execute("select count(*) as applied from jobtracker_schema_migrations")
                 cur.fetchone()
     except Exception as exc:
         return [f"database: {exc}"]
@@ -191,6 +209,21 @@ def run_doctor(
         report["ok"] = False
         report["issues"].extend(item["issue"] for item in placeholder_issues)
 
+    from .automation_state import AutomationStateStore
+    from .portability import state_db_path
+    from .store.registry import describe_store
+
+    report["checks"]["store"] = describe_store(config.store, root=config.root)
+    state_db = state_db_path(config.root)
+    pending = AutomationStateStore(state_db).pending_runs() if state_db.exists() else []
+    report["checks"]["pending_sync"] = [
+        {"run_key": row["run_key"], "payload_path": row["payload_path"], "last_error": row["last_error"]}
+        for row in pending
+    ]
+    if pending:
+        report["issues"].append(
+            f"pending_sync: {len(pending)} local run(s) failed to replay; rerun sync-pending-runs"
+        )
     if config.calendar:
         report["checks"]["calendar"] = check_calendar_config(config, skip_network=skip_network)
         if report["checks"]["calendar"]:
@@ -199,8 +232,8 @@ def run_doctor(
 
     if not skip_network:
         report["checks"]["connectors"] = check_connector_health(config)
-        if config.store["backend"] in {"postgres", "postgresql", "supabase"}:
-            report["checks"]["database"] = check_db_connectivity()
+        if config.store["backend"] == "postgres":
+            report["checks"]["database"] = check_db_connectivity(config.store)
         if config.mail.get("inbox"):
             report["checks"]["imap"] = check_imap_connectivity(config.mail["inbox"], root=config.root)
         if config.mail.get("outbox"):
@@ -208,7 +241,7 @@ def run_doctor(
         if config.notify:
             report["checks"]["notifiers"] = check_notifier_health(config)
         for section, issues in report["checks"].items():
-            if section in ("profile_placeholders", "calendar"):
+            if section in {"profile_placeholders", "calendar", "store", "pending_sync"}:
                 continue
             if isinstance(issues, dict):
                 for name, entries in issues.items():
@@ -260,6 +293,9 @@ def run_pipeline(
     now: datetime | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    from .portability import prune_after_run
+    from .store.registry import describe_store
+
     project_root = root or Path.cwd()
     config = load_app_config(config_path, root=project_root)
     pipeline_key = normalize_space(pipeline_name).lower()
@@ -276,8 +312,14 @@ def run_pipeline(
     resolved_fixture_dir = config.resolve_path(fixture_dir) if fixture_dir else None
 
     stored: list[dict[str, Any]] = []
-    if not dry_run and pipeline["include_db"]:
-        with open_job_store(config.store, root=config.root) as store:
+    receipt = describe_store(config.store, root=config.root)
+    persistence = "dry_run" if dry_run else ("skipped" if not pipeline["include_db"] else "stored")
+    pruned: dict[str, Any] | None = None
+    with ExitStack() as stack:
+        store = None
+        if not dry_run and pipeline["include_db"]:
+            store = stack.enter_context(open_job_store(config.store, root=config.root))
+        if store is not None:
             manifest = prepare_jobboard_run(
                 profile_slug=profile.slug,
                 providers=pipeline["providers"],
@@ -298,22 +340,28 @@ def run_pipeline(
                 if not payload_path:
                     continue
                 result = store.upsert_run_payload(provider_run["provider"], payload_path)
-                stored.append({"provider": provider_run["provider"], **vars(result)})
-    else:
-        manifest = prepare_jobboard_run(
-            profile_slug=profile.slug,
-            providers=pipeline["providers"],
-            output_dir=output_dir,
-            payload_dir=payload_dir,
-            profile_dir=config.profile_dir,
-            root=config.root,
-            include_db=False,
-            config_path=config.sources[0],
-            fixture_dir=resolved_fixture_dir,
-            now=now,
-            max_pages=int(pipeline["max_pages"]),
-            detail_limit=pipeline.get("detail_limit"),
-        )
+                verify = getattr(store, "verify_run", None)
+                if verify and not verify(result.run_key):
+                    raise RuntimeError(f"Readback failed: run {result.run_key} is not in the store")
+                stored.append(
+                    {"provider": provider_run["provider"], **vars(result), "verified": bool(verify)}
+                )
+            pruned = prune_after_run(config, store, manifest)
+        else:
+            manifest = prepare_jobboard_run(
+                profile_slug=profile.slug,
+                providers=pipeline["providers"],
+                output_dir=output_dir,
+                payload_dir=payload_dir,
+                profile_dir=config.profile_dir,
+                root=config.root,
+                include_db=False,
+                config_path=config.sources[0],
+                fixture_dir=resolved_fixture_dir,
+                now=now,
+                max_pages=int(pipeline["max_pages"]),
+                detail_limit=pipeline.get("detail_limit"),
+            )
 
     notifications: list[dict[str, Any]] = []
     channels = pipeline.get("notify_channels") or []
@@ -332,10 +380,15 @@ def run_pipeline(
         )
         notifications = notify_all(notifiers, report)
 
-    return {
+    result: dict[str, Any] = {
         "pipeline": pipeline_key,
         "dry_run": dry_run,
+        "persistence": persistence,
+        "store": receipt,
         "manifest": manifest,
         "stored": stored,
         "notifications": notifications,
     }
+    if pruned is not None:
+        result["pruned"] = pruned
+    return result

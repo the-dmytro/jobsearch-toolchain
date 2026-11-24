@@ -21,7 +21,6 @@ class Settings:
     secret_key: str | None
     service_role_key: str | None
     storage_bucket: str
-    store_backend: str
     artifact_backend: str
     mail_folder_aliases: dict[str, list[str]]
     own_report_senders: frozenset[str]
@@ -87,7 +86,6 @@ def load_settings() -> Settings:
         secret_key=os.getenv("SUPABASE_SECRET_KEY"),
         service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
         storage_bucket=os.getenv("SUPABASE_STORAGE_BUCKET", "job-artifacts"),
-        store_backend=os.getenv("JOBTRACKER_STORE_BACKEND", "sqlite"),
         artifact_backend=os.getenv("JOBTRACKER_ARTIFACT_BACKEND", "local"),
         mail_folder_aliases=_load_mail_folder_aliases(),
         own_report_senders=_load_own_report_senders(),

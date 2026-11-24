@@ -8,6 +8,9 @@ import unittest
 import warnings
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.app_config.loader import (
     DEFAULT_CONFIG_PATH,
     LOCAL_CONFIG_SUFFIX,
@@ -161,7 +164,7 @@ class LoadAppConfigTests(unittest.TestCase):
 
 class ValidateJobsearchConfigTests(unittest.TestCase):
     def test_paths_fall_back_to_defaults(self) -> None:
-        validated = validate_jobsearch_config({})
+        validated = validate_jobsearch_config({"store": {"backend": "sqlite"}})
 
         self.assertEqual(validated["paths"]["config_dir"], "config")
         self.assertEqual(validated["paths"]["profile_dir"], "profile")
@@ -180,6 +183,23 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
                 {"pipelines": {"jobboards": {"type": "jobboard", "profile": "generic"}}}
             )
 
+    def test_store_backend_must_be_chosen_explicitly(self) -> None:
+        with self.assertRaises(ConfigValidationError) as caught:
+            validate_jobsearch_config({})
+        self.assertIn("no fallback", str(caught.exception))
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "postgres", "transport": "direct"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "sqlite", "connector": "postgres_direct"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "sqlite", "required_backend": "sqlite"}})
+        with self.assertRaises(ConfigValidationError):
+            validate_jobsearch_config({"store": {"backend": "postgres", "connector": "postgres_direct"}})
+        validated = validate_jobsearch_config({"store": {"backend": "supabase", "hosting": "Supabase"}})
+        self.assertEqual(validated["store"]["backend"], "postgres")
+        self.assertNotIn("connector", validated["store"])
+        self.assertEqual(validated["store"]["hosting"], "supabase")
+
     def test_unknown_schema_version_is_rejected(self) -> None:
         with self.assertRaises(ConfigValidationError):
             validate_jobsearch_config({"schema_version": 2})
@@ -196,6 +216,7 @@ class ValidateJobsearchConfigTests(unittest.TestCase):
                     }
                 },
                 "notify": {"Email": {"to": "me@example.com"}},
+                "store": {"backend": "sqlite"},
             }
         )
 

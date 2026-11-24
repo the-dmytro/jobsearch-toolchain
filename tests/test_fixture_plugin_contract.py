@@ -4,6 +4,9 @@ import unittest
 from importlib.metadata import PackageNotFoundError, distribution, entry_points
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.core.connectors import build_connector
 from jobtracker.core.models import ConnectorBuildContext
 from jobtracker.mail.base import OutgoingMessage

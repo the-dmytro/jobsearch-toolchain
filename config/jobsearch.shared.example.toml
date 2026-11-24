@@ -1,0 +1,50 @@
+schema_version = 1
+
+# Shared-database template: several environments use the same PostgreSQL database.
+# This file stays environment-agnostic. Each environment selects how it reaches the
+# database with its own variable JOBTRACKER_STORE_CONNECTOR (for example
+# postgres_direct or supabase_https). See Docs/onboarding/ENVIRONMENT_SETUP.md.
+
+[paths]
+config_dir = "config"
+profile_dir = "profile"
+output_dir = "outputs"
+payload_dir = "outputs/automation-payloads"
+
+[store]
+backend = "postgres"
+# Where the database is hosted, if known (for example "supabase"). Leave unset when
+# unknown: agents must not assume a provider.
+# hosting = "supabase"
+# Full job texts kept in the database: shortlisted | all | none.
+text_retention = "shortlisted"
+# After a verified write, delete local artifacts the database already holds.
+auto_prune = true
+prune_min_age_hours = 24
+artifact_backend = "local"
+artifact_local_path = "outputs/artifacts"
+
+[pipelines.jobboards]
+type = "jobboard"
+profile = "generic"
+providers = ["example_jsonld"]
+include_db = true
+max_pages = 1
+
+# Config-only sources (no Python). Add the slug to a pipeline's providers list to run.
+# Every listing host must be allowed by the environment's network policy.
+[sources.example_jsonld]
+kind = "jsonld"
+listing_url = "https://careers.example.invalid/jobs"
+detail_limit = 10
+
+[sources.example_jsonld.role_lane]
+name = "configured-role-lane"
+include_terms = ["engineer", "developer"]
+exclude_terms = ["intern", "manager"]
+
+# HTTP-only sandboxes cannot open IMAP/SMTP. Use HTTPS notifiers instead, e.g.:
+# [pipelines.jobboards.notify]
+# channels = ["telegram"]
+# [notify.telegram]
+# kind = "telegram"

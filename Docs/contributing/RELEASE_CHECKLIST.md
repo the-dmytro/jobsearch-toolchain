@@ -35,4 +35,4 @@
 - [ ] Obtain explicit approval for orphan rewrite, force-update, legacy branch deletion, signed tag, ruleset, and private overlay reconstruction.
 - [ ] Verify signed `v0.2.0`, protected `main`, required green CI, disabled force pushes, and disabled branch deletion.
 - [ ] Document that rewriting reduces reachability but cannot clear third-party caches; use hosting support if required.
-- [ ] Keep retained JSON payload artifacts as the store-switch recovery boundary.
+- [ ] With SQLite, keep retained JSON payload artifacts as the store-switch recovery boundary; with PostgreSQL, prune them only after `prune-local` verifies them.

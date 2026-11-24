@@ -9,6 +9,9 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.automation import run_doctor, run_pipeline, scaffold_config
 
 ROOT = Path(__file__).resolve().parent.parent

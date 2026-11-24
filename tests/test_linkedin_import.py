@@ -6,6 +6,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.linkedin_import import (
     build_linkedin_application_records,
     linkedin_job_id_from_url,

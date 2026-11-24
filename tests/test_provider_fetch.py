@@ -4,6 +4,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.provider_fetch import _matches_lane, benchmark_providers, collect_provider_run
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "jobtracker" / "fixtures" / "provider_fetch"
@@ -24,9 +27,7 @@ class ProviderFetchTests(unittest.TestCase):
         self.assertTrue(_matches_lane("Junior Data Engineer", lane))
 
     def test_dou_fixture_run_parses_and_enriches_one_ios_job(self) -> None:
-        result = collect_provider_run(
-            "dou", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
-        )
+        result = collect_provider_run("dou", dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(result.candidates), 1)
@@ -40,7 +41,7 @@ class ProviderFetchTests(unittest.TestCase):
 
     def test_workua_fixture_run_parses_numeric_job_id(self) -> None:
         result = collect_provider_run(
-            "workua", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
+            "workua", dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
         )
 
         self.assertEqual(result.status, "completed")
@@ -53,7 +54,7 @@ class ProviderFetchTests(unittest.TestCase):
 
     def test_djinni_fixture_run_uses_json_ld(self) -> None:
         result = collect_provider_run(
-            "djinni", conn=None, dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
+            "djinni", dry_run=True, fixture_dir=FIXTURE_DIR, now=NOW, detail_limit=1
         )
 
         self.assertEqual(result.status, "completed")
@@ -67,7 +68,6 @@ class ProviderFetchTests(unittest.TestCase):
     def test_greenhouse_fixture_run_uses_board_api(self) -> None:
         result = collect_provider_run(
             "greenhouse",
-            conn=None,
             dry_run=True,
             fixture_dir=FIXTURE_DIR,
             now=NOW,

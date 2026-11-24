@@ -18,6 +18,9 @@ def _require_mapping(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
+POSTGRES_ALIASES = frozenset({"postgres", "postgresql", "supabase"})
+
+
 def _require_str(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigValidationError(f"{path} must be a non-empty string")
@@ -79,7 +82,14 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
         notify[str(channel).strip().lower()] = _require_mapping(channel_config, f"notify.{channel}")
 
     store_raw = _require_mapping(root.get("store", {}), "store")
-    backend = _require_str(store_raw.get("backend", "sqlite"), "store.backend").lower()
+    if "backend" not in store_raw:
+        raise ConfigValidationError(
+            'store.backend is required: choose "sqlite" (local file) or "postgres" (shared database). '
+            "There is no default and no fallback between them."
+        )
+    backend = _require_str(store_raw.get("backend"), "store.backend").lower()
+    if backend in POSTGRES_ALIASES:
+        backend = "postgres"
     store = dict(store_raw)
     store.update(
         {
@@ -91,6 +101,39 @@ def validate_jobsearch_config(data: dict[str, Any]) -> dict[str, Any]:
             "artifact_local_path": str(store_raw.get("artifact_local_path") or "outputs/artifacts"),
         }
     )
+    if "required_backend" in store_raw:
+        raise ConfigValidationError(
+            "store.required_backend was removed: store.backend is the only database choice."
+        )
+    if "transport" in store_raw:
+        raise ConfigValidationError(
+            "store.transport was removed: set JOBTRACKER_STORE_CONNECTOR (postgres_direct or supabase_https) "
+            "in each environment."
+        )
+    if "connector" in store_raw:
+        raise ConfigValidationError(
+            "store.connector is environment-specific and does not belong in the repository config; "
+            "set JOBTRACKER_STORE_CONNECTOR in each environment instead."
+        )
+    if backend == "postgres":
+        if "hosting" in store_raw:
+            store["hosting"] = _require_str(store_raw["hosting"], "store.hosting").lower()
+    else:
+        if "hosting" in store_raw:
+            raise ConfigValidationError('store.hosting applies only to store.backend = "postgres"')
+    if "text_retention" in store_raw:
+        from ..store.compact import normalize_text_retention
+
+        try:
+            store["text_retention"] = normalize_text_retention(store_raw["text_retention"])
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+    if "auto_prune" in store_raw and not isinstance(store_raw["auto_prune"], bool):
+        raise ConfigValidationError("store.auto_prune must be a boolean")
+    if "prune_min_age_hours" in store_raw:
+        value = store_raw["prune_min_age_hours"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ConfigValidationError("store.prune_min_age_hours must be a non-negative number")
 
     sources_raw = _require_mapping(root.get("sources", {}), "sources")
     sources = {

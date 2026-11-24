@@ -17,7 +17,7 @@ not already at the project root.
 | `export-summary` | Export one application summary through the configured `JobStore` |
 
 ```bash
-python -m jobtracker init
+python -m jobtracker init                    # or: init --template shared
 python -m jobtracker doctor --skip-network
 python -m jobtracker run jobboards --dry-run --fixture-dir jobtracker/fixtures/provider_fetch
 python -m jobtracker run jobboards --fixture-dir jobtracker/fixtures/provider_fetch
@@ -98,7 +98,23 @@ python -m jobtracker sync-pending-runs \
 ```
 
 The replay state database prevents already-synced `run_key` values from being sent
-again. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
+again; a run is marked only after its write is committed and read back. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
+
+## Shared store, documents, and cleanup
+
+With PostgreSQL as the shared store, these commands keep work portable across
+environments. They never write to a local fallback. See
+[Shared PostgreSQL store](DB/SHARED_STORE.md).
+
+| Command | Purpose |
+| --- | --- |
+| `documents put/list/get` | Store and read drafts, reports, cover letters, notes |
+| `record-application` | Idempotently record a confirmed application from JSON |
+| `prune-local` | Delete local artifacts whose content is verified in the database |
+| `compact-db` | Remove legacy full-payload copies; apply job-text retention |
+
+If the configured store is unreachable, these commands and `run`/`upsert-run` fail;
+nothing is written elsewhere.
 
 ## Optional PostgreSQL and imports
 

@@ -4,39 +4,116 @@
   "title": "JobSearch configuration v1",
   "type": "object",
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": {
+      "const": 1
+    },
     "paths": {
       "type": "object",
       "properties": {
-        "config_dir": { "type": "string", "minLength": 1 },
-        "profile_dir": { "type": "string", "minLength": 1 },
-        "output_dir": { "type": "string", "minLength": 1 },
-        "payload_dir": { "type": "string", "minLength": 1 }
+        "config_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "payload_dir": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "store": {
       "type": "object",
       "properties": {
-        "backend": { "type": "string", "minLength": 1, "default": "sqlite" },
-        "sqlite_path": { "type": "string", "minLength": 1, "default": "outputs/jobsearch.sqlite3" },
-        "artifact_backend": { "type": "string", "minLength": 1, "default": "local" },
-        "artifact_local_path": { "type": "string", "minLength": 1, "default": "outputs/artifacts" }
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required. sqlite, postgres, memory, or a plugin store slug. No default and no fallback."
+        },
+        "sqlite_path": {
+          "type": "string",
+          "minLength": 1,
+          "default": "outputs/jobsearch.sqlite3"
+        },
+        "artifact_backend": {
+          "type": "string",
+          "minLength": 1,
+          "default": "local"
+        },
+        "artifact_local_path": {
+          "type": "string",
+          "minLength": 1,
+          "default": "outputs/artifacts"
+        },
+        "text_retention": {
+          "enum": [
+            "shortlisted",
+            "all",
+            "none"
+          ],
+          "default": "shortlisted",
+          "description": "Which full job texts PostgreSQL keeps; others keep a hash and excerpt only."
+        },
+        "auto_prune": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a verified PostgreSQL write, delete local artifacts the database holds."
+        },
+        "prune_min_age_hours": {
+          "type": "number",
+          "minimum": 0,
+          "default": 24
+        },
+        "connector": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Database connector for this environment, e.g. postgres_direct or supabase_https. Usually set in config/environments/<name>.toml."
+        },
+        "hosting": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the database is hosted, only if known (e.g. supabase)."
+        }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "required": [
+        "backend"
+      ]
     },
     "sources": {
       "type": "object",
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "kind": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
           "role_lane": {
             "type": "object",
             "properties": {
-              "name": { "type": "string" },
-              "include_terms": { "type": "array", "items": { "type": "string" } },
-              "exclude_terms": { "type": "array", "items": { "type": "string" } }
+              "name": {
+                "type": "string"
+              },
+              "include_terms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exclude_terms": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             },
             "additionalProperties": false
           }
@@ -47,18 +124,26 @@
     "mail": {
       "type": "object",
       "properties": {
-        "inbox": { "$ref": "#/$defs/connectorConfig" },
-        "outbox": { "$ref": "#/$defs/connectorConfig" },
+        "inbox": {
+          "$ref": "#/$defs/connectorConfig"
+        },
+        "outbox": {
+          "$ref": "#/$defs/connectorConfig"
+        },
         "parsers": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/connectorConfig" }
+          "additionalProperties": {
+            "$ref": "#/$defs/connectorConfig"
+          }
         }
       },
       "additionalProperties": false
     },
     "notify": {
       "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/connectorConfig" }
+      "additionalProperties": {
+        "$ref": "#/$defs/connectorConfig"
+      }
     },
     "calendar": {
       "type": "object",
@@ -106,27 +191,56 @@
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
-        "required": ["type", "profile", "providers"],
+        "required": [
+          "type",
+          "profile",
+          "providers"
+        ],
         "properties": {
-          "type": { "const": "jobboard" },
-          "profile": { "type": "string", "minLength": 1 },
+          "type": {
+            "const": "jobboard"
+          },
+          "profile": {
+            "type": "string",
+            "minLength": 1
+          },
           "providers": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string", "minLength": 1 },
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "uniqueItems": true
           },
-          "include_db": { "type": "boolean" },
-          "max_pages": { "type": "integer", "minimum": 1 },
-          "detail_limit": { "type": "integer", "minimum": 0 },
-          "output_dir": { "type": "string", "minLength": 1 },
-          "payload_dir": { "type": "string", "minLength": 1 },
+          "include_db": {
+            "type": "boolean"
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "detail_limit": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "payload_dir": {
+            "type": "string",
+            "minLength": 1
+          },
           "notify": {
             "type": "object",
             "properties": {
               "channels": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 },
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "uniqueItems": true
               }
             },
@@ -137,7 +251,11 @@
       }
     }
   },
-  "required": ["schema_version", "store", "pipelines"],
+  "required": [
+    "schema_version",
+    "store",
+    "pipelines"
+  ],
   "additionalProperties": false,
   "$defs": {
     "patternList": {
@@ -147,7 +265,10 @@
     "connectorConfig": {
       "type": "object",
       "properties": {
-        "kind": { "type": "string", "minLength": 1 }
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": true
     }
