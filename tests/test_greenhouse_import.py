@@ -6,6 +6,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.greenhouse_import import (
     build_greenhouse_application_records,
     greenhouse_application_id_from_url,

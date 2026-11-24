@@ -7,6 +7,8 @@ import unittest
 from unittest import mock
 
 import httpx
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
 
 from jobtracker.config import load_settings
 from jobtracker.core.models import FetchMetrics

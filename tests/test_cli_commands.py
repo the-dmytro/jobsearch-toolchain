@@ -19,6 +19,9 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker import cli as jobtracker_cli
 from jobtracker.mail.base import SendReceipt
 from jobtracker.store.generic.memory import MemoryJobStore

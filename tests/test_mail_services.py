@@ -5,6 +5,9 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.mail.registry import filter_provider_messages, message_matches_provider, parser_registry
 from jobtracker.mail.services.ats_ack import AtsAckParser
 from jobtracker.mail.services.linkedin import (

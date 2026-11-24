@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.calendar import ical as I
 from jobtracker.calendar.events import (
     MANAGED_FOOTER,

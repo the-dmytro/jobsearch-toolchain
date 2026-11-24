@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker import automation
 from jobtracker.app_config.loader import AppConfig, load_app_config
 from jobtracker.app_config.schema import ConfigValidationError
@@ -487,11 +490,12 @@ class RunPipelinePersistenceTests(ScaffoldedRootTestCase):
         self.addCleanup(patcher.stop)
 
     def test_unreachable_database_is_an_error_with_no_local_copy(self) -> None:
-        from jobtracker.db import MissingConfigurationError
+        from jobtracker.db import MissingConfigurationError, MissingDependencyError
 
         env = {"JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1"}
         with mock.patch.dict(os.environ, env):
-            with self.assertRaises(MissingConfigurationError):
+            # Without psycopg installed the direct connector fails earlier, which is also an error.
+            with self.assertRaises((MissingConfigurationError, MissingDependencyError)):
                 run_pipeline("jobboards", root=self.root, fixture_dir=FIXTURE_DIR, now=NOW)
         self.assertFalse((self.root / "outputs/jobsearch.sqlite3").exists())
         self.assertFalse((self.root / "outputs/automation-state").exists())

@@ -12,12 +12,15 @@ from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.automation_state import PostgresAutomationStateStore
 from jobtracker.cli import main
 from jobtracker.db import connect_test
 from jobtracker.retention import plan_prune
 from jobtracker.store.generic.postgres import PostgresJobStore
-from jobtracker.store.generic.postgres_documents import put_document, record_application
+from jobtracker.store.generic.postgres_documents import list_documents, put_document, record_application
 from jobtracker.testing import SKIP_REASON, prepare_test_database, test_db_reachable
 
 TABLES = (
@@ -122,6 +125,48 @@ class PortabilityDbTests(unittest.TestCase):
             }
             self.assertEqual(items["a.evaluated.payload.json"].action, "delete")
             self.assertEqual(items["a.deduped.payload.json"].action, "delete")
+
+    def test_committed_run_is_visible_to_another_connection(self) -> None:
+        path = self._write("c.payload.json", payload("acme-run-commit", evaluated=False))
+        with connect_test() as writer, connect_test() as reader:
+            store = PostgresJobStore(writer)
+            store.upsert_run_payload("acme", str(path))
+            self.assertIsNone(PostgresJobStore(reader).verify_run("acme-run-commit"))
+            store.commit()
+            reader.rollback()
+            self.assertIsNotNone(PostgresJobStore(reader).verify_run("acme-run-commit"))
+
+    def test_payload_hash_is_recorded_once_for_runs_stored_without_one(self) -> None:
+        path = self._write("h.payload.json", payload("acme-run-hash", evaluated=True))
+        with connect_test() as conn:
+            store = PostgresJobStore(conn)
+            store.upsert_run_payload("acme", str(path))
+            with conn.cursor() as cur:
+                cur.execute(
+                    "update automation_runs set metadata = metadata - 'payload_sha256' "
+                    "where run_key = 'acme-run-hash'"
+                )
+            self.assertIsNone(store.verify_run("acme-run-hash")["payload_sha256"])
+            self.assertTrue(store.record_payload_sha256("acme-run-hash", "a" * 64))
+            self.assertEqual(store.verify_run("acme-run-hash")["payload_sha256"], "a" * 64)
+            self.assertFalse(store.record_payload_sha256("acme-run-hash", "b" * 64))
+            self.assertEqual(store.verify_run("acme-run-hash")["payload_sha256"], "a" * 64)
+
+    def test_documents_find_organizations_with_non_ascii_names(self) -> None:
+        with connect_test() as conn:
+            with conn.cursor() as cur:
+                for name, key in (("Квітка", ""), ("Nordwerk OÜ", "nordwerk o")):
+                    cur.execute(
+                        "insert into organizations(name, normalized_name) values (%s, %s)",
+                        (name, key or "arbium"),
+                    )
+            for name in ("Квітка", "Nordwerk OÜ"):
+                document = put_document(conn, kind="cover_letter", body=f"Hello {name}", organization=name)
+                self.assertEqual(
+                    [item["id"] for item in list_documents(conn, organization=name)], [document["id"]]
+                )
+            with self.assertRaises(ValueError):
+                put_document(conn, kind="cover_letter", body="x", organization="Невідома")
 
     def test_shared_automation_state(self) -> None:
         with connect_test() as conn:

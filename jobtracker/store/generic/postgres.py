@@ -727,7 +727,6 @@ def _upsert_run_payload(
     if validation.errors:
         raise ValueError(f"Invalid automation payload: {'; '.join(validation.errors)}")
     payload = validation.normalized
-    provider_id = _provider(conn, provider_slug)
     run = payload.get("run") or {}
     run_key = normalize_space(run.get("run_key") or payload.get("run_key"))
     if not run_key:
@@ -735,6 +734,7 @@ def _upsert_run_payload(
         run_key = f"{provider_slug}-{slugify(timestamp)}"
 
     with conn.transaction():
+        provider_id = _provider(conn, provider_slug)
         report_artifact_id = (
             _artifact(conn, report_path, provider_slug, run_key, artifact_backend) if report_path else None
         )
@@ -851,6 +851,19 @@ def _verify_run(conn: Any, run_key: str) -> dict[str, Any] | None:
         )
         row = cur.fetchone()
     return dict(row) if row else None
+
+
+def _record_payload_sha256(conn: Any, run_key: str, payload_sha256: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            update automation_runs
+            set metadata = metadata || jsonb_build_object('payload_sha256', %s::text)
+            where run_key = %s and coalesce(metadata ->> 'payload_sha256', '') = ''
+            """,
+            (payload_sha256, run_key),
+        )
+        return cur.rowcount > 0
 
 
 def _check_duplicates(
@@ -1098,6 +1111,17 @@ class PostgresJobStore:
     def verify_run(self, run_key: str) -> dict[str, Any] | None:
         """Read back a stored run; ``None`` means the run is not in the database."""
         return _verify_run(self.conn, run_key)
+
+    def record_payload_sha256(self, run_key: str, payload_sha256: str) -> bool:
+        """Store the payload hash on a run that has none, without rewriting the run."""
+        return _record_payload_sha256(self.conn, run_key, payload_sha256)
+
+    def commit(self) -> None:
+        """Commit the connection's open transaction (the connection is not autocommit)."""
+        self.conn.commit()
+
+    def rollback(self) -> None:
+        self.conn.rollback()
 
     def find_document_by_sha(self, content_sha256: str) -> dict[str, Any] | None:
         from .postgres_documents import find_document_by_sha

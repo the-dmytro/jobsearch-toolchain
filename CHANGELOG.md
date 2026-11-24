@@ -18,6 +18,14 @@ All notable changes use semantic versions. The project is distributed from signe
 - Migration `007_portability_documents.sql` (`documents`, `opportunity_texts`, compact opportunity-card columns); `documents put/list/get`, `record-application`, `prune-local` and `compact-db` commands.
 - Shared PostgreSQL automation state (processed messages, sent reports, run events) and store receipts with readback on `run` and `upsert-run`.
 
+### Fixed
+
+- `sync-pending-runs` commits each run before reading it back and marking it synced, so an interrupted replay no longer leaves "synced" marks for writes that were never committed; the provider row is written inside the run's transaction.
+- `sync-pending-runs` records the payload hash for runs stored before `payload_sha256` existed (equal opportunity and evaluation counts) instead of rewriting them on every replay (`hashes_recorded` in the summary).
+- `documents put/list --organization` finds organizations with non-ASCII names by their stored name.
+- The test suite no longer reads a real `config/jobsearch.toml`, `.env`, or `JOBTRACKER_*`/`SUPABASE_*` variables (`tests/hermetic.py`).
+- Two connector-isolation tests failed on CI jobs without `psycopg`; they now accept the missing-dependency error, which is still a failure with no fallback.
+
 ### Changed
 
 - Canonical development moves to the public `jobsearch-toolchain` repository.

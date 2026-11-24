@@ -42,12 +42,27 @@ def _row(row: Any) -> dict[str, Any] | None:
 
 
 def find_organization(conn: Any, name: str | None) -> str | None:
-    normalized = normalize_name(name)
-    if not normalized:
+    """Organization id for ``name``: the exact stored name first, then its ASCII-normalized key.
+
+    ``normalize_name`` keeps only ``a-z0-9``, so names with other letters (``Квітка``,
+    ``Nordwerk OÜ``) normalize to an empty or truncated key. Matching the stored name
+    (case-insensitively) comes first; the normalized key is only a fallback and is
+    never used when it is empty.
+    """
+    cleaned = normalize_space(name)
+    if not cleaned:
         return None
     with conn.cursor() as cur:
-        cur.execute("select id from organizations where normalized_name = %s", (normalized,))
+        cur.execute(
+            "select id from organizations where lower(name) = lower(%s) order by (name = %s) desc, id limit 1",
+            (cleaned, cleaned),
+        )
         row = cur.fetchone()
+        if row is None:
+            normalized = normalize_name(cleaned)
+            if normalized:
+                cur.execute("select id from organizations where normalized_name = %s", (normalized,))
+                row = cur.fetchone()
     return str(row["id"]) if row else None
 
 
@@ -180,8 +195,11 @@ def list_documents(
         clauses.append("d.status = %s")
         params.append(normalize_space(status).lower())
     if organization:
-        clauses.append("o.normalized_name = %s")
-        params.append(normalize_name(organization))
+        organization_id = find_organization(conn, organization)
+        if not organization_id:
+            return []
+        clauses.append("d.organization_id = %s")
+        params.append(organization_id)
     where = f"where {' and '.join(clauses)}" if clauses else ""
     params.append(limit)
     with conn.cursor() as cur:

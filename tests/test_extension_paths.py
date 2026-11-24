@@ -15,6 +15,9 @@ import unittest
 from typing import Any
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.core import registry as core_registry
 from jobtracker.core.errors import UnknownConnectorError
 from jobtracker.core.models import Candidate, CollectionContext, ConnectorBuildContext, FetchMetrics

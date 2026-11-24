@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from hermetic import subprocess_kwargs
+
 
 class CliDryRunTests(unittest.TestCase):
     @property
@@ -24,7 +26,7 @@ class CliDryRunTests(unittest.TestCase):
 
         result = subprocess.run(
             [sys.executable, "-m", "jobtracker", "import-legacy", "--csv", str(path), "--dry-run"],
-            cwd=Path(__file__).resolve().parent.parent,
+            **subprocess_kwargs(),
             text=True,
             capture_output=True,
             check=True,
@@ -59,7 +61,7 @@ class CliDryRunTests(unittest.TestCase):
                             str(payload_path),
                             *extra,
                         ],
-                        cwd=Path(__file__).resolve().parent.parent,
+                        **subprocess_kwargs(),
                         text=True,
                         capture_output=True,
                         check=True,
@@ -88,7 +90,7 @@ class CliDryRunTests(unittest.TestCase):
                 "--max-boards",
                 "1",
             ],
-            cwd=Path(__file__).resolve().parent.parent,
+            **subprocess_kwargs(),
             text=True,
             capture_output=True,
             check=True,
@@ -147,7 +149,7 @@ class CliDryRunTests(unittest.TestCase):
                         str(root),
                         "--no-db",
                     ],
-                    cwd=Path(__file__).resolve().parent.parent,
+                    **subprocess_kwargs(),
                     text=True,
                     capture_output=True,
                     check=True,
@@ -213,7 +215,7 @@ class CliDryRunTests(unittest.TestCase):
                     "--normalized-out",
                     str(normalized_path),
                 ],
-                cwd=Path(__file__).resolve().parent.parent,
+                **subprocess_kwargs(),
                 text=True,
                 capture_output=True,
                 check=True,
@@ -265,7 +267,7 @@ class CliDryRunTests(unittest.TestCase):
                     "--output",
                     str(output_path),
                 ],
-                cwd=Path(__file__).resolve().parent.parent,
+                **subprocess_kwargs(),
                 text=True,
                 capture_output=True,
                 check=True,
@@ -336,7 +338,7 @@ class CliDryRunTests(unittest.TestCase):
                     "--now",
                     "2026-05-12T12:00:00+00:00",
                 ],
-                cwd=Path(__file__).resolve().parent.parent,
+                **subprocess_kwargs(),
                 text=True,
                 capture_output=True,
                 check=True,

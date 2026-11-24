@@ -12,6 +12,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.core.models import Candidate, ExistingRef, FetchMetrics
 from jobtracker.sources.shared.infer import (
     _excerpt,

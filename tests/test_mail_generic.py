@@ -9,6 +9,9 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.mail.base import OutgoingMessage, RawMessage
 from jobtracker.mail.generic.eml import (
     parse_email_file,

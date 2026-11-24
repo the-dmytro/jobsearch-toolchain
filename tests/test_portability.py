@@ -13,10 +13,13 @@ from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.automation import run_doctor
 from jobtracker.automation_state import AutomationStateStore, open_automation_state
 from jobtracker.cli import main
-from jobtracker.db import MissingConfigurationError
+from jobtracker.db import MissingConfigurationError, MissingDependencyError
 from jobtracker.portability import choose_replay_files, require_shared_store
 from jobtracker.retention import apply_prune, classify, plan_prune
 from jobtracker.store.compact import compact_facts, keep_full_text, normalize_text_retention, sha256_json
@@ -353,7 +356,8 @@ class ConnectorIsolationTests(unittest.TestCase):
             "JOBTRACKER_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none?connect_timeout=1",
         }
         with mock.patch.dict(os.environ, env), mock.patch.object(https_sql, "connect_https") as https:
-            with self.assertRaises(MissingConfigurationError):
+            # Without psycopg installed the direct connector fails earlier, which is also an error.
+            with self.assertRaises((MissingConfigurationError, MissingDependencyError)):
                 with registry.open_job_store(
                     {"backend": "postgres", "connector": "postgres_direct"}, root=Path(".")
                 ):

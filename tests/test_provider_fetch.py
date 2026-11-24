@@ -4,6 +4,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.provider_fetch import _matches_lane, benchmark_providers, collect_provider_run
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "jobtracker" / "fixtures" / "provider_fetch"
