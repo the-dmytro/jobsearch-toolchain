@@ -127,14 +127,22 @@ class PortabilityDbTests(unittest.TestCase):
             self.assertEqual(items["a.deduped.payload.json"].action, "delete")
 
     def test_committed_run_is_visible_to_another_connection(self) -> None:
-        path = self._write("c.payload.json", payload("acme-run-commit", evaluated=False))
+        idle = self._write("c.payload.json", payload("acme-run-commit", evaluated=False))
+        nested = self._write("d.payload.json", payload("acme-run-nested", evaluated=False))
         with connect_test() as writer, connect_test() as reader:
             store = PostgresJobStore(writer)
-            store.upsert_run_payload("acme", str(path))
-            self.assertIsNone(PostgresJobStore(reader).verify_run("acme-run-commit"))
-            store.commit()
-            reader.rollback()
+            # On an idle connection the run is its own transaction and is committed on return.
+            store.upsert_run_payload("acme", str(idle))
             self.assertIsNotNone(PostgresJobStore(reader).verify_run("acme-run-commit"))
+            reader.rollback()
+            # Inside an open transaction the run is only a savepoint until the store commits.
+            with writer.cursor() as cur:
+                cur.execute("select 1")
+            store.upsert_run_payload("acme", str(nested))
+            self.assertIsNone(PostgresJobStore(reader).verify_run("acme-run-nested"))
+            reader.rollback()
+            store.commit()
+            self.assertIsNotNone(PostgresJobStore(reader).verify_run("acme-run-nested"))
 
     def test_payload_hash_is_recorded_once_for_runs_stored_without_one(self) -> None:
         path = self._write("h.payload.json", payload("acme-run-hash", evaluated=True))
