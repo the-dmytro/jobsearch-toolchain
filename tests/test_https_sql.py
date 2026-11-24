@@ -18,6 +18,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.automation_state import PostgresAutomationStateStore
 from jobtracker.db import MissingConfigurationError, connect_test
 from jobtracker.store.generic.postgres import PostgresJobStore

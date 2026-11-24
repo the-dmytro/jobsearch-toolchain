@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 try:
     import tomllib
 except ModuleNotFoundError:

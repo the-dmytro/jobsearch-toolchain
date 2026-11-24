@@ -8,6 +8,9 @@ import unittest
 import warnings
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.app_config.loader import (
     DEFAULT_CONFIG_PATH,
     LOCAL_CONFIG_SUFFIX,

@@ -4,6 +4,9 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.notify.base import RunReport
 from jobtracker.notify.generic.email import EmailNotifier
 from jobtracker.notify.generic.webhook import WebhookNotifier

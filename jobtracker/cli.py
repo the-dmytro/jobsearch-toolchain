@@ -525,6 +525,24 @@ def _provider_from_payload(path: Path, payload: dict, explicit_provider: str | N
     return slugify(path.stem.split(".", 1)[0])
 
 
+def _commit_store(store: Any) -> None:
+    """Commit what the store has written so far; stores without transactions have nothing to do."""
+    commit = getattr(store, "commit", None)
+    if commit:
+        commit()
+
+
+def _rollback_store(store: Any) -> None:
+    rollback = getattr(store, "rollback", None)
+    if rollback:
+        rollback()
+
+
+def _end_read_transaction(store: Any) -> None:
+    """Close the implicit transaction a read opened so the next write starts from a clean connection."""
+    _commit_store(store)
+
+
 def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     root = Path(getattr(args, "root", None) or ".")
     payload_dir = Path(args.payload_dir)
@@ -543,6 +561,7 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
     payload_paths = sorted(payload_dir.rglob("*.payload.json"))
     synced = 0
     skipped = 0
+    hashes_recorded = 0
     failed: list[dict[str, str]] = []
     conflicts: list[dict[str, Any]] = []
     if not payload_paths:
@@ -580,15 +599,37 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
                 continue
             verify = getattr(target, "verify_run", None)
             existing = verify(run_key) if verify else None
+            _end_read_transaction(target)
             if existing and not getattr(args, "overwrite_richer", False):
+                local_opportunities = payload.get("opportunities") or payload.get("jobs") or []
                 local_evaluations = sum(
-                    1
-                    for item in payload.get("opportunities") or []
-                    if isinstance(item, dict) and item.get("evaluation")
+                    1 for item in local_opportunities if isinstance(item, dict) and item.get("evaluation")
                 )
-                if existing.get("payload_sha256") == sha256_json(payload):
+                payload_sha = sha256_json(payload)
+                stored_sha = existing.get("payload_sha256")
+                if stored_sha == payload_sha:
                     state.mark_run_db_synced(provider, run_key, str(payload_path))
                     skipped += 1
+                    continue
+                record_payload_sha = getattr(target, "record_payload_sha256", None)
+                if (
+                    not stored_sha
+                    and record_payload_sha
+                    and int(existing.get("opportunities_count") or 0) == len(local_opportunities)
+                    and int(existing.get("evaluations_count") or 0) == local_evaluations
+                ):
+                    # Stored before payload hashes existed and the counts agree: remember the hash
+                    # instead of rewriting the run on every replay.
+                    try:
+                        record_payload_sha(run_key, payload_sha)
+                        _commit_store(target)
+                    except Exception as exc:
+                        _rollback_store(target)
+                        failed.append({"payload": str(payload_path), "run_key": run_key, "error": str(exc)})
+                        continue
+                    state.mark_run_db_synced(provider, run_key, str(payload_path))
+                    skipped += 1
+                    hashes_recorded += 1
                     continue
                 if int(existing.get("evaluations_count") or 0) > local_evaluations:
                     conflicts.append(
@@ -604,11 +645,17 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
             try:
                 state.mark_run_sync_attempt(provider, run_key, str(payload_path))
                 target.upsert_run_payload(provider, str(payload_path))
+                # Commit this run before reading it back and marking it synced: the local state
+                # database is not part of the store's transaction, so an interrupted replay must
+                # never leave a "synced" mark for a write that was not committed.
+                _commit_store(target)
                 if verify and not verify(run_key):
                     raise RuntimeError(f"readback failed for {run_key}")
+                _end_read_transaction(target)
                 state.mark_run_db_synced(provider, run_key, str(payload_path))
                 synced += 1
             except Exception as exc:
+                _rollback_store(target)
                 state.mark_run_sync_attempt(provider, run_key, str(payload_path), error=str(exc))
                 state.record_run_event(
                     provider, run_key, "db_sync_failed", str(exc), {"payload_path": str(payload_path)}
@@ -620,6 +667,7 @@ def cmd_sync_pending_runs(args: argparse.Namespace) -> int:
             "target_store": target_store,
             "synced": synced,
             "skipped": skipped,
+            "hashes_recorded": hashes_recorded,
             "conflicts": conflicts,
             "failed": failed,
             "dry_run": args.dry_run,

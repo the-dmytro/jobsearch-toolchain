@@ -13,6 +13,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.core.models import CollectionContext, FetchMetrics
 from jobtracker.sources.generic.csv import CsvSource
 from jobtracker.sources.generic.html import HtmlSource

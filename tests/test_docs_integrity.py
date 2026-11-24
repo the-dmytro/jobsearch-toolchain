@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("check_docs", ROOT / "scripts/check_docs.py")
 assert SPEC and SPEC.loader

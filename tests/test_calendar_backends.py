@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker import cli
 from jobtracker.app_config.loader import load_app_config
 from jobtracker.app_config.schema import ConfigValidationError

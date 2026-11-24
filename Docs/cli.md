@@ -98,7 +98,7 @@ python -m jobtracker sync-pending-runs \
 ```
 
 The replay state database prevents already-synced `run_key` values from being sent
-again. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
+again; a run is marked only after its write is committed and read back. Repeated writes of a run to SQLite and PostgreSQL are idempotent.
 
 ## Shared store, documents, and cleanup
 

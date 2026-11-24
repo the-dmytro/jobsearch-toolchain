@@ -7,6 +7,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.db import connect_test
 from jobtracker.greenhouse_import import import_greenhouse_tracking
 from jobtracker.legacy_import import import_legacy_csv

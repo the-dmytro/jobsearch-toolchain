@@ -13,6 +13,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hermetic import set_up_module as setUpModule  # noqa: F401
+from hermetic import tear_down_module as tearDownModule  # noqa: F401
+
 from jobtracker.provider_fetch import collect_provider_run
 from jobtracker.sources.registry import source_registry
 from jobtracker.sources.services.ashby import AshbySource

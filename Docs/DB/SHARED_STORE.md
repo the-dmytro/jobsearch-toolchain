@@ -86,6 +86,11 @@ python -m jobtracker documents get --source-key notes/cover.md --output /tmp/cov
 Writing the same key again updates the document. `--delete-local` removes the file
 only after a read back that matches the stored content hash.
 
+`--organization` takes the organization's name as stored (case-insensitive), so names
+with non-ASCII letters (`Квітка`, `Nordwerk OÜ`) work; the ASCII-normalized key is only
+a fallback. `--organization-id` skips the lookup. `documents list --organization` uses
+the same lookup.
+
 ## Confirmed applications
 
 ```bash
@@ -146,3 +151,11 @@ PostgreSQL. It replays one file per `run_key`, the most final variant (evaluated
 deduped, raw, normalized). It skips a file that
 is identical to the stored run. It refuses to overwrite a stored run that has more
 evaluations than the local file; `--overwrite-richer` overrides this.
+
+Each run is committed on its own: the write is committed, read back from the committed
+data, and only then marked as synced in the local state database. An interrupted replay
+therefore leaves every marked run stored, and the next replay resumes with the rest. A
+run stored before payload hashes existed (no `payload_sha256`) whose opportunity and
+evaluation counts equal the local file's is not rewritten: the replay records the hash,
+marks the run synced, and reports it under `hashes_recorded`. Runs whose counts differ
+are rewritten, and the evaluation-count conflict rule above still applies.
