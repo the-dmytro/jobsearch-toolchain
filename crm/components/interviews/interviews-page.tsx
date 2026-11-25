@@ -1,11 +1,16 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
 import Link from "next/link";
-import { useState } from "react";
-import { Calendar } from "@/components/ui/calendar";
+import { useMemo, useState } from "react";
+
+import { EmptyState } from "@/components/crm/empty-state";
+import { ErrorState } from "@/components/crm/error-state";
+import { PageHeader } from "@/components/crm/page-header";
+import { TableSkeleton } from "@/components/crm/table-skeleton";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -14,121 +19,242 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { fetchAll } from "@/lib/fetch-all";
+import { formatDate, formatNumber } from "@/lib/format";
 import { qk } from "@/lib/query-keys";
 import { createClient } from "@/lib/supabase/client";
+import type { Tables } from "@/types/database.types";
+
+import { InterviewCalendar } from "./interview-calendar";
+
+export type InterviewListRow = Tables<"interviews"> & {
+  applications: { id: string; opportunities: { title: string } | null } | null;
+  organizations: { name: string } | null;
+};
+
+type Row = InterviewListRow & { role: string; company: string; time: number | null };
+
+function toMs(value: string | null): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function InterviewTable({
+  caption,
+  rows,
+  emptyText,
+}: {
+  caption: string;
+  rows: Row[];
+  emptyText: string;
+}) {
+  return (
+    <section aria-label={caption} className="space-y-2">
+      <h2 className="text-sm font-semibold">
+        {caption} <span className="font-normal tabular-nums text-muted-foreground">({formatNumber(rows.length)})</span>
+      </h2>
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{emptyText}</p>
+      ) : (
+        <div className="rounded-xl border bg-card">
+          <Table>
+            <caption className="sr-only">{caption}</caption>
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col">When</TableHead>
+                <TableHead scope="col">Stage</TableHead>
+                <TableHead scope="col">Role</TableHead>
+                <TableHead scope="col">Company</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell className="whitespace-nowrap text-xs">
+                    <Link href={`/interviews/${row.id}`} className="hover:underline">
+                      {formatDate(row.scheduled_at, { withTime: true })}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{row.stage ?? "—"}</TableCell>
+                  <TableCell>
+                    {row.applications?.id ? (
+                      <Link href={`/applications/${row.applications.id}`} className="hover:underline">
+                        {row.role || "Application"}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell>{row.company || "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function InterviewsPage() {
-  const [month, setMonth] = useState<Date>(new Date());
-
-  const { data: interviews, isLoading, error } = useQuery({
+  const query = useQuery({
     queryKey: qk.interviews,
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error: err } = await supabase
-        .from("interviews")
-        .select(
+      return fetchAll<InterviewListRow>((from, to) =>
+        supabase
+          .from("interviews")
+          .select(
+            `
+            *,
+            applications ( id, opportunities ( title ) ),
+            organizations ( name )
           `
-          *,
-          applications ( id, opportunities(title) ),
-          organizations ( name )
-        `
-        )
-        .order("scheduled_at", { ascending: false })
-        .limit(200);
-      if (err) throw err;
-      return data ?? [];
+          )
+          .order("id")
+          .range(from, to)
+      );
     },
   });
 
-  const datesWithInterviews = new Set<string>();
-  for (const i of interviews ?? []) {
-    const row = i as { scheduled_at?: string | null };
-    if (row.scheduled_at) {
-      datesWithInterviews.add(format(new Date(row.scheduled_at), "yyyy-MM-dd"));
-    }
-  }
+  const [month, setMonth] = useState(() => new Date());
+  const [clockMs] = useState(() => Date.now());
+  const [search, setSearch] = useState("");
+  const data = query.data;
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) {
+  const rows = useMemo<Row[]>(
+    () =>
+      (data ?? []).map((row) => ({
+        ...row,
+        role: row.applications?.opportunities?.title ?? "",
+        company: row.organizations?.name ?? "",
+        time: toMs(row.scheduled_at),
+      })),
+    [data]
+  );
+
+  const scheduledAt = useMemo(() => rows.map((row) => row.scheduled_at), [rows]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      [row.role, row.company, row.stage ?? "", row.notes ?? ""].some((text) =>
+        text.toLowerCase().includes(q)
+      )
+    );
+  }, [rows, search]);
+
+  // Split by the moment the screen opened, so rows do not change sides while it is open.
+  const { upcoming, past } = useMemo(() => {
+    const now = clockMs;
+    const later: Row[] = [];
+    const earlier: Row[] = [];
+    for (const row of filtered) {
+      if (row.time !== null && row.time >= now) later.push(row);
+      else earlier.push(row);
+    }
+    later.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+    // Newest first. Rows without a date go last.
+    earlier.sort((a, b) => {
+      if (a.time === null || b.time === null) return Number(a.time === null) - Number(b.time === null);
+      return b.time - a.time;
+    });
+    return { upcoming: later, past: earlier };
+  }, [filtered, clockMs]);
+
+  const header = (
+    <PageHeader
+      title="Interviews"
+      description="Scheduled and logged interviews, split into upcoming and past."
+      count={data ? filtered.length : undefined}
+    />
+  );
+
+  if (query.isError && !data) {
     return (
-      <p className="text-destructive">
-        {error instanceof Error ? error.message : "Error"}
-      </p>
+      <div className="space-y-6">
+        {header}
+        <ErrorState
+          title="Interviews couldn't load"
+          error={query.error}
+          onRetry={() => void query.refetch()}
+        />
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Interviews</h1>
-        <p className="text-sm text-muted-foreground">{interviews?.length ?? 0} scheduled / logged</p>
-      </div>
+      {header}
 
-      <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Calendar</CardTitle>
-          </CardHeader>
-          <CardContent className="flex justify-center">
-            <Calendar
-              mode="single"
-              month={month}
-              onMonthChange={setMonth}
-              modifiers={{
-                booked: (date) => datesWithInterviews.has(format(date, "yyyy-MM-dd")),
-              }}
-              modifiersClassNames={{
-                booked: "bg-primary/20 font-semibold",
-              }}
-            />
-          </CardContent>
-        </Card>
+      {!data ? (
+        <TableSkeleton rows={6} cols={4} label="Loading interviews" />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No interviews yet"
+          description="Interviews appear here once one is scheduled for an application."
+        />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle className="text-base">Calendar</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center">
+              <InterviewCalendar
+                scheduledAt={scheduledAt}
+                month={month}
+                onMonthChange={setMonth}
+              />
+            </CardContent>
+          </Card>
 
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Stage</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Company</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(interviews ?? []).map((row: Record<string, unknown>) => {
-                const apps = row.applications as {
-                  id: string;
-                  opportunities: { title?: string } | null;
-                } | null;
-                const org = row.organizations as { name?: string } | null;
-                return (
-                  <TableRow key={String(row.id)}>
-                    <TableCell className="text-xs whitespace-nowrap">
-                      {row.scheduled_at
-                        ? format(new Date(String(row.scheduled_at)), "yyyy-MM-dd HH:mm")
-                        : "—"}
-                    </TableCell>
-                    <TableCell>{String(row.stage ?? "—")}</TableCell>
-                    <TableCell>
-                      {apps?.id ? (
-                        <Link
-                          href={`/applications/${apps.id}`}
-                          className="hover:underline"
-                        >
-                          {apps.opportunities?.title ?? "Application"}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell>{org?.name ?? "—"}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <div className="space-y-6">
+            <div className="space-y-1">
+              <label htmlFor="interview-search" className="text-xs font-medium text-muted-foreground">
+                Search interviews
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  id="interview-search"
+                  type="search"
+                  value={search}
+                  placeholder="Role, company, stage or notes"
+                  onChange={(event) => setSearch(event.target.value)}
+                  className="max-w-md"
+                />
+                {search ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            {filtered.length === 0 ? (
+              <EmptyState
+                title="No interviews match this search"
+                description="Try a different role, company or stage."
+              />
+            ) : (
+              <>
+                <InterviewTable
+                  caption="Upcoming interviews"
+                  rows={upcoming}
+                  emptyText="Nothing scheduled ahead."
+                />
+                <InterviewTable
+                  caption="Past interviews"
+                  rows={past}
+                  emptyText="No past interviews match."
+                />
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

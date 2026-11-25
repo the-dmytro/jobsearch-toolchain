@@ -29,6 +29,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { mutationMessage, unwrapAction } from "@/components/applications/action-error";
 import { updateApplication } from "@/lib/actions/applications";
 import { invalidateAfterMutation } from "@/lib/mutations";
 import { applicationUpdateSchema } from "@/lib/schemas/application";
@@ -67,14 +68,14 @@ export function ApplicationEditSheet({
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const res = await updateApplication(values);
-      if (!res.ok) throw new Error(res.message);
+      unwrapAction(res);
     },
     onSuccess: () => {
       toast.success("Saved");
       void invalidateAfterMutation(qc, { applicationId: application.id });
       onOpenChange(false);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(mutationMessage(e)),
   });
 
   return (
@@ -82,7 +83,7 @@ export function ApplicationEditSheet({
       <SheetContent className="overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>Edit application</SheetTitle>
-          <SheetDescription>Updates sync to Supabase via server action.</SheetDescription>
+          <SheetDescription>Changes are saved to this application.</SheetDescription>
         </SheetHeader>
         <Form {...form}>
           <form

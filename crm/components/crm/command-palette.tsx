@@ -80,7 +80,7 @@ export function CommandPalette() {
         <CommandSeparator />
         <CommandGroup heading="Quick tips">
           <CommandItem disabled>
-            Use Board view on Applications for kanban drag-and-drop
+            On Applications, choose Board to move an application to another stage
           </CommandItem>
         </CommandGroup>
       </CommandList>
