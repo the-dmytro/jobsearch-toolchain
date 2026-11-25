@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Scan tracked files and staged diffs for PII deny-list matches."""
+"""Scan tracked files and staged diffs for PII deny-list matches and secret-like material."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 DEFAULT_DENYLIST = Path(".pii-denylist.txt")
+DENYLIST_ENV = "PII_DENYLIST"
 SCAN_SKIP_PATHS = frozenset(
     {
         DEFAULT_DENYLIST,
@@ -17,14 +20,6 @@ SCAN_SKIP_PATHS = frozenset(
         Path("tests/test_public_safety.py"),
     }
 )
-FALLBACK_PATTERNS = [
-    "[REDACTED]",
-    "[REDACTED]",
-    "[REDACTED]",
-    "[REDACTED]",
-    "[REDACTED]",
-]
-
 ALLOWED_EMAIL_DOMAINS = {
     "example.com",
     "example.org",
@@ -46,18 +41,32 @@ SECRET_RES = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+    # Supabase JWT (anon or service_role): three base64url segments, first starts with eyJ.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"),
+    re.compile(r"\bsb_secret_[A-Za-z0-9_-]{20,}"),
+    # OpenAI-style and Anthropic (sk-ant-) keys.
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{10,}"),
 )
 
 
-def load_patterns(path: Path) -> list[str]:
+def _parse_patterns(text: str) -> list[str]:
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+
+def load_patterns(path: Path, environ: Mapping[str, str] | None = None) -> list[str] | None:
+    """Deny-list patterns from the file, else from PII_DENYLIST, else None (not configured).
+
+    An empty or comment-only source counts as not configured.
+    """
     if path.exists():
-        lines = [
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        return lines or FALLBACK_PATTERNS
-    return FALLBACK_PATTERNS
+        patterns = _parse_patterns(path.read_text(encoding="utf-8"))
+        if patterns:
+            return patterns
+    env = os.environ if environ is None else environ
+    patterns = _parse_patterns(env.get(DENYLIST_ENV, ""))
+    return patterns or None
 
 
 def tracked_files() -> list[Path]:
@@ -117,10 +126,19 @@ def scan_text(text: str, patterns: list[str], label: str) -> list[str]:
     return hits
 
 
-def scan_structural_text(text: str, label: str) -> list[str]:
+def scan_generic_text(text: str, label: str) -> list[str]:
+    """Checks that need no personal data: conflict markers and secret-like material."""
     hits: list[str] = []
     if CONFLICT_RE.search(text):
         hits.append(f"{label}: contains a merge conflict marker")
+    for secret_re in SECRET_RES:
+        if secret_re.search(text):
+            hits.append(f"{label}: contains secret-like material")
+    return hits
+
+
+def scan_structural_text(text: str, label: str) -> list[str]:
+    hits = scan_generic_text(text, label)
     if HOME_PATH_RE.search(text):
         hits.append(f"{label}: contains an absolute user home path")
     for match in EMAIL_RE.finditer(text):
@@ -133,20 +151,25 @@ def scan_structural_text(text: str, label: str) -> list[str]:
             hits.append(f"{label}: contains an email address: {match.group(0)!r}")
     if PHONE_RE.search(text):
         hits.append(f"{label}: contains a phone number")
-    for secret_re in SECRET_RES:
-        if secret_re.search(text):
-            hits.append(f"{label}: contains secret-like material")
     return hits
 
 
-def scan_file(path: Path, patterns: list[str]) -> list[str]:
+def scan_content(text: str, label: str, patterns: list[str] | None) -> list[str]:
+    """Structural checks always run; literal deny-list matches only when patterns are configured."""
+    hits = scan_structural_text(text, label)
+    if patterns:
+        hits = scan_text(text, patterns, label) + hits
+    return hits
+
+
+def scan_file(path: Path, patterns: list[str] | None) -> list[str]:
     if not path.exists() or path.is_dir():
         return []
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    return scan_text(content, patterns, str(path)) + scan_structural_text(content, str(path))
+    return scan_content(content, str(path), patterns)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,18 +189,22 @@ def main(argv: list[str] | None = None) -> int:
 
     patterns = load_patterns(args.denylist)
     violations: list[str] = []
+    if patterns is None:
+        print(
+            "warning: no PII deny-list configured (.pii-denylist.txt or PII_DENYLIST); "
+            "skipping literal deny-list matches, structural and secret checks still run",
+            file=sys.stderr,
+        )
 
     if args.staged_only:
         staged = staged_added_text()
-        violations.extend(scan_text(staged, patterns, "staged diff"))
-        violations.extend(scan_structural_text(staged, "staged diff"))
+        violations.extend(scan_content(staged, "staged diff", patterns))
     else:
         for path in tracked_files():
             violations.extend(scan_tracked_path(path))
             violations.extend(scan_file(path, patterns))
         staged = staged_added_text()
-        violations.extend(scan_text(staged, patterns, "staged diff"))
-        violations.extend(scan_structural_text(staged, "staged diff"))
+        violations.extend(scan_content(staged, "staged diff", patterns))
 
     if violations:
         print("PII scan FAILED:", file=sys.stderr)

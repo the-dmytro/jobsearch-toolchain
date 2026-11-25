@@ -54,8 +54,13 @@ export function CommandPalette() {
   }, []);
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Jump to page…" />
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      title="Jump to a page"
+      description="Type a page name, then press Enter to open it."
+    >
+      <CommandInput placeholder="Jump to page…" aria-label="Search pages" />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
         <CommandGroup heading="Navigate">
@@ -75,7 +80,7 @@ export function CommandPalette() {
         <CommandSeparator />
         <CommandGroup heading="Quick tips">
           <CommandItem disabled>
-            Use Board view on Applications for kanban drag-and-drop
+            On Applications, choose Board to move an application to another stage
           </CommandItem>
         </CommandGroup>
       </CommandList>

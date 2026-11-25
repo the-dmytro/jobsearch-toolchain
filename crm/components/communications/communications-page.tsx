@@ -2,79 +2,88 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import Link from "next/link";
+import { z } from "zod";
+
+import { mutationMessage, unwrapAction } from "@/components/applications/action-error";
+import { EmptyState } from "@/components/crm/empty-state";
+import { ErrorState } from "@/components/crm/error-state";
+import { PageHeader } from "@/components/crm/page-header";
+import { TableSkeleton } from "@/components/crm/table-skeleton";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { createCommunication } from "@/lib/actions/communications";
+import { fetchAll } from "@/lib/fetch-all";
+import { formatDate, formatRelative } from "@/lib/format";
+import { invalidateAfterMutation } from "@/lib/mutations";
 import { qk } from "@/lib/query-keys";
 import { communicationInsertSchema } from "@/lib/schemas/communication";
 import { createClient } from "@/lib/supabase/client";
-import { z } from "zod";
+import type { Tables } from "@/types/database.types";
+
+export type CommunicationListRow = Tables<"communications"> & {
+  organizations: { name: string } | null;
+  applications: { id: string } | null;
+};
+
+type ApplicationPick = { id: string; opportunities: { title: string } | null };
+
+function timeOf(row: Pick<Tables<"communications">, "sent_at" | "created_at">): number {
+  const ms = Date.parse(row.sent_at ?? row.created_at);
+  return Number.isNaN(ms) ? 0 : ms;
+}
 
 export function CommunicationsPage() {
   const qc = useQueryClient();
-  const { data: rows, isLoading, error } = useQuery({
+  const [search, setSearch] = useState("");
+
+  const listQuery = useQuery({
     queryKey: qk.communications,
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error: err } = await supabase
-        .from("communications")
-        .select(
+      const rows = await fetchAll<CommunicationListRow>((after, limit) => {
+        let query = supabase
+          .from("communications")
+          .select(
+            `
+            *,
+            organizations ( name ),
+            applications ( id )
           `
-          *,
-          organizations ( name ),
-          applications ( id )
-        `
-        )
-        .order("sent_at", { ascending: false })
-        .limit(200);
-      if (err) throw err;
-      return data ?? [];
+          )
+          .order("id")
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
+      );
+      return rows.sort((a, b) => timeOf(b) - timeOf(a));
     },
   });
 
-  const { data: apps } = useQuery({
+  const appsQuery = useQuery({
     queryKey: [...qk.applications, "pick"],
     queryFn: async () => {
       const supabase = createClient();
-      const { data } = await supabase
-        .from("applications")
-        .select("id, opportunities(title)")
-        .order("updated_at", { ascending: false })
-        .limit(100);
-      return data ?? [];
+      const rows = await fetchAll<ApplicationPick>((after, limit) => {
+        let query = supabase
+          .from("applications")
+          .select("id, opportunities(title)")
+          .order("id")
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
+      );
+      return rows;
     },
   });
 
@@ -95,46 +104,43 @@ export function CommunicationsPage() {
   const mutation = useMutation({
     mutationFn: async (v: FormValues) => {
       const res = await createCommunication(v);
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      unwrapAction(res);
     },
     onSuccess: () => {
-      toast.success("Logged");
-      void qc.invalidateQueries({ queryKey: qk.communications });
-      form.reset({
-        ...form.getValues(),
-        subject: "",
-        summary: "",
-      });
+      toast.success("Message logged");
+      void invalidateAfterMutation(qc);
+      form.reset({ ...form.getValues(), subject: "", summary: "" });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(mutationMessage(e)),
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) {
-    return (
-      <p className="text-destructive">
-        {error instanceof Error ? error.message : "Error"}
-      </p>
+  const rows = listQuery.data;
+  const filtered = useMemo(() => {
+    const all = rows ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((row) =>
+      [row.subject ?? "", row.summary ?? "", row.organizations?.name ?? ""].some((text) =>
+        text.toLowerCase().includes(q)
+      )
     );
-  }
+  }, [rows, search]);
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">Communications</h1>
-        <p className="text-sm text-muted-foreground">{rows?.length ?? 0} rows</p>
-      </div>
+      <PageHeader
+        title="Communications"
+        description="Messages and calls logged against applications and companies."
+        count={rows ? filtered.length : undefined}
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Log communication</CardTitle>
+          <CardTitle className="text-base">Log a message</CardTitle>
         </CardHeader>
         <CardContent>
           <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
-              className="grid gap-3 sm:grid-cols-2"
-            >
+            <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="grid gap-3 sm:grid-cols-2">
               <FormField
                 control={form.control}
                 name="application_id"
@@ -147,23 +153,23 @@ export function CommunicationsPage() {
                     >
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="Link to application" />
+                          <SelectValue placeholder="Link to an application" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="_">None</SelectItem>
-                        {(apps ?? []).map(
-                          (a: {
-                            id: string;
-                            opportunities: { title?: string } | null;
-                          }) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              {a.opportunities?.title ?? a.id.slice(0, 8)}
-                            </SelectItem>
-                          )
-                        )}
+                        {(appsQuery.data ?? []).map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.opportunities?.title ?? "Untitled role"}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
+                    {appsQuery.isError ? (
+                      <p className="text-xs text-muted-foreground">
+                        Applications could not load, so this list may be incomplete.
+                      </p>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -195,46 +201,91 @@ export function CommunicationsPage() {
                 )}
               />
               <Button type="submit" disabled={mutation.isPending}>
-                Save
+                {mutation.isPending ? "Saving…" : "Save message"}
               </Button>
             </form>
           </Form>
         </CardContent>
       </Card>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>When</TableHead>
-              <TableHead>Subject</TableHead>
-              <TableHead>Application</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(rows ?? []).map((row: Record<string, unknown>) => (
-              <TableRow key={String(row.id)}>
-                <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                  {String(row.sent_at ?? row.created_at ?? "").slice(0, 16)}
-                </TableCell>
-                <TableCell>{String(row.subject ?? "—")}</TableCell>
-                <TableCell>
-                  {(row.applications as { id?: string } | null)?.id ? (
-                    <Link
-                      href={`/applications/${(row.applications as { id: string }).id}`}
-                      className="text-primary hover:underline"
-                    >
-                      Open
-                    </Link>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      {listQuery.isError && !rows ? (
+        <ErrorState
+          title="Messages couldn't load"
+          error={listQuery.error}
+          onRetry={() => void listQuery.refetch()}
+        />
+      ) : !rows ? (
+        <TableSkeleton rows={6} cols={3} label="Loading messages" />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No messages logged yet"
+          description="Log an email or call above, or from an application, to keep the history in one place."
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="communication-search" className="sr-only">
+              Search messages
+            </label>
+            <Input
+              id="communication-search"
+              type="search"
+              value={search}
+              placeholder="Subject, summary or company"
+              onChange={(event) => setSearch(event.target.value)}
+              className="max-w-md"
+            />
+            {search ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+            ) : null}
+          </div>
+
+          {filtered.length === 0 ? (
+            <EmptyState title="No messages match this search" description="Try a different subject or company." />
+          ) : (
+            <div className="rounded-xl border bg-card">
+              <Table>
+                <caption className="sr-only">Logged messages, most recent first</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">When</TableHead>
+                    <TableHead scope="col">Subject</TableHead>
+                    <TableHead scope="col">Company</TableHead>
+                    <TableHead scope="col">Application</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((row) => {
+                    const when = row.sent_at ?? row.created_at;
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                          <time dateTime={when} title={formatRelative(when)}>
+                            {formatDate(when, { withTime: true })}
+                          </time>
+                        </TableCell>
+                        <TableCell>{row.subject ?? "No subject"}</TableCell>
+                        <TableCell>{row.organizations?.name ?? "—"}</TableCell>
+                        <TableCell>
+                          {row.applications?.id ? (
+                            <Link href={`/applications/${row.applications.id}`} className="text-primary hover:underline">
+                              Open application
+                            </Link>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

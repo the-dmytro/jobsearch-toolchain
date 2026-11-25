@@ -18,6 +18,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { isDemoMode } from "@/lib/demo";
+import { routeUsesDateRange } from "@/lib/date-range-routes";
 import { Badge } from "@/components/ui/badge";
 
 const LABELS: Record<string, string> = {
@@ -33,7 +34,7 @@ const LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-function breadcrumbSegments(pathname: string) {
+export function breadcrumbSegments(pathname: string) {
   if (pathname === "/") {
     return [{ href: "/", label: "Dashboard" }];
   }
@@ -41,29 +42,42 @@ function breadcrumbSegments(pathname: string) {
   const parts = pathname.split("/").filter(Boolean);
   return parts.map((part, index) => {
     const href = `/${parts.slice(0, index + 1).join("/")}`;
-    const label = LABELS[part] ?? part.replace(/-/g, " ");
+    // A segment under a known section is a record id (a UUID): show "Details", not the id.
+    const label = LABELS[part] ?? (index > 0 && LABELS[parts[0]] ? "Details" : part.replace(/-/g, " "));
     return { href, label };
   });
 }
 
+/**
+ * Header and content wrapper for dashboard pages. It renders inside the shell's
+ * <main id="main"> (see `app/(dashboard)/layout.tsx`), so it must not add another
+ * <main>.
+ *
+ * On narrow screens (under 640px) the breadcrumb shows only the current page, and
+ * the date range becomes a select. Nothing is hidden outright.
+ */
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const segments = breadcrumbSegments(pathname);
+  const showDateRange = routeUsesDateRange(pathname);
 
   return (
     <>
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-        <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="mr-2 h-6" />
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3 sm:px-4">
+        <SidebarTrigger className="-ml-1 shrink-0" aria-label="Toggle navigation menu" />
+        <Separator orientation="vertical" className="mr-1 h-6 shrink-0 sm:mr-2" />
         <Breadcrumb className="min-w-0 flex-1">
-          <BreadcrumbList>
+          <BreadcrumbList className="min-w-0 flex-nowrap">
             {segments.map((segment, index) => {
               const isLast = index === segments.length - 1;
               return (
-                <span key={segment.href} className="contents">
-                  <BreadcrumbItem>
+                <span
+                  key={segment.href}
+                  className={isLast ? "contents min-w-0" : "contents max-sm:hidden"}
+                >
+                  <BreadcrumbItem className="min-w-0">
                     {isLast ? (
-                      <BreadcrumbPage className="capitalize">
+                      <BreadcrumbPage className="truncate capitalize">
                         {segment.label}
                       </BreadcrumbPage>
                     ) : (
@@ -81,17 +95,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             })}
           </BreadcrumbList>
         </Breadcrumb>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {isDemoMode() ? (
-            <Badge variant="secondary" className="hidden sm:inline-flex">
+            <Badge variant="secondary" className="hidden lg:inline-flex">
               Demo mode
             </Badge>
           ) : null}
-          <DateRangePicker />
+          {showDateRange ? <DateRangePicker /> : null}
           <ThemeToggle />
         </div>
       </header>
-      <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+      {/* overflow-x-clip: a child that is wider than the page clips here instead of widening the document. relative: absolutely positioned descendants such as sr-only text are clipped here too. Wide tables and the stage board scroll in their own containers. */}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-x-clip p-4 md:p-6">{children}</div>
     </>
   );
 }

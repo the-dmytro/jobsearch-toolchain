@@ -1,55 +1,108 @@
+"use client";
+
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import type { PipelineAging } from "@/lib/analytics";
-import { normalizeStage } from "@/lib/stages";
+import { DashboardCard, type CardStatus } from "@/components/dashboard/dashboard-card";
+import { stageLabel } from "@/components/dashboard/labels";
+import type { PipelineAgingRow } from "@/lib/analytics";
+import { formatDuration, formatNumber } from "@/lib/format";
 
-type PipelineAgingCardProps = {
-  pipeline: PipelineAging[];
+/** Rows shown. The card lists the longest-waiting open applications first. */
+export const AGING_ROW_LIMIT = 10;
+
+type AgingBucket = {
+  label: string;
+  /** Sequential aging token: one hue, darker means older. */
+  fill: string;
 };
 
-export function PipelineAgingCard({ pipeline }: PipelineAgingCardProps) {
-  const rows = pipeline.slice(0, 10);
+const RECENT: AgingBucket = { label: "Recent", fill: "bg-aging-ok" };
+const AGING: AgingBucket = { label: "Aging", fill: "bg-aging-warn" };
+const STALLED: AgingBucket = { label: "Stalled", fill: "bg-aging-critical" };
+
+/** Matches the stalled threshold on the attention card: over 14 days is stalled. */
+export function agingBucket(days: number): AgingBucket {
+  if (days > 14) return STALLED;
+  if (days > 7) return AGING;
+  return RECENT;
+}
+
+const LEGEND: ReadonlyArray<{ bucket: AgingBucket; text: string }> = [
+  { bucket: RECENT, text: "Up to 7 days" },
+  { bucket: AGING, text: "8 to 14 days" },
+  { bucket: STALLED, text: "Over 14 days" },
+];
+
+type PipelineAgingCardProps = {
+  pipeline?: PipelineAgingRow[];
+  /** Every open application, not only the rows in `pipeline`. Same number as the Open pipeline KPI. */
+  openCount?: number;
+  status: CardStatus;
+};
+
+/**
+ * Open applications as horizontal bars, longest-waiting first. Bars are scaled to the longest
+ * row shown. Each row links to its application and carries a text label, so the bucket is
+ * never read from colour alone.
+ */
+export function PipelineAgingCard({ pipeline, openCount, status }: PipelineAgingCardProps) {
+  const rows = (pipeline ?? []).slice(0, AGING_ROW_LIMIT);
+  const total = openCount ?? pipeline?.length ?? 0;
+  const longest = Math.max(1, ...rows.map((row) => row.daysSinceActivity));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Pipeline aging</CardTitle>
-        <CardDescription>Open applications sorted by days in current stage</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No open applications</p>
-        ) : (
-          rows.map((row) => {
-            const stale = (row.days_in_stage ?? 0) >= 14;
-            return (
+    <DashboardCard
+      title="Pipeline aging"
+      description="Days since each open application had any activity, longest first."
+      status={status}
+      isEmpty={rows.length === 0}
+      emptyTitle="No open applications"
+      emptyDescription="Open applications appear here with the days since their last activity."
+      footer={
+        total > AGING_ROW_LIMIT ? (
+          <p className="border-t pt-3 text-xs text-muted-foreground">
+            Showing the {formatNumber(AGING_ROW_LIMIT)} longest of {formatNumber(total)} open applications.
+          </p>
+        ) : null
+      }
+    >
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-label="Aging legend">
+        {LEGEND.map(({ bucket, text }) => (
+          <li key={bucket.label} className="flex items-center gap-1.5">
+            <span aria-hidden="true" className={`size-2.5 rounded-sm ${bucket.fill}`} />
+            <span>
+              {bucket.label}, {text}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <ol className="space-y-1">
+        {rows.map((row) => {
+          const bucket = agingBucket(row.daysSinceActivity);
+          const width = (row.daysSinceActivity / longest) * 100;
+          return (
+            <li key={row.applicationId}>
               <Link
-                key={row.application_id}
-                href={`/applications/${row.application_id}`}
-                className="flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
+                href={`/applications/${row.applicationId}`}
+                className="block rounded-md px-2 py-2 hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring"
               >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{row.opportunity_title}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {row.organization_name} · {normalizeStage(row.current_stage)}
-                  </p>
+                <div className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="min-w-0 truncate font-medium">{row.title}</span>
+                  <span className="shrink-0 text-xs font-medium tabular-nums">
+                    {formatDuration(row.daysSinceActivity)}
+                  </span>
                 </div>
-                <Badge variant={stale ? "destructive" : "secondary"}>
-                  {row.days_in_stage ?? 0}d
-                </Badge>
+                <div aria-hidden="true" className="mt-1 h-2 overflow-hidden rounded-sm bg-muted">
+                  <div className={`h-full rounded-sm ${bucket.fill}`} style={{ width: `${width}%` }} />
+                </div>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {row.company} · {stageLabel(row.stage)} · {bucket.label}
+                </p>
               </Link>
-            );
-          })
-        )}
-      </CardContent>
-    </Card>
+            </li>
+          );
+        })}
+      </ol>
+    </DashboardCard>
   );
 }

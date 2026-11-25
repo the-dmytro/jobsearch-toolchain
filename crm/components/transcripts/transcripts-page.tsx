@@ -1,114 +1,161 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+
 import { ArtifactOpenButton } from "@/components/crm/artifact-open-button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { EmptyState } from "@/components/crm/empty-state";
+import { ErrorState } from "@/components/crm/error-state";
+import { PageHeader } from "@/components/crm/page-header";
+import { TableSkeleton } from "@/components/crm/table-skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { fetchAll } from "@/lib/fetch-all";
+import { formatDate, formatRelative } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/types/database.types";
 
+const TYPE_LABELS: Record<string, string> = {
+  transcript: "Interview transcript",
+  report: "Report",
+  evaluation: "Evaluation",
+  cv: "CV",
+  cover_letter: "Cover letter",
+  job_description: "Job description",
+};
+
+/** A readable name for a stored file type. Unknown types are tidied, not hidden. */
+export function artifactTypeLabel(type: string | null | undefined): string {
+  const key = (type ?? "").trim().toLowerCase();
+  if (!key) return "File";
+  if (TYPE_LABELS[key]) return TYPE_LABELS[key];
+  const words = key.replace(/[_-]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Transcripts are files whose type or title says so. */
+export function isTranscript(artifact: Pick<Tables<"artifacts">, "artifact_type" | "title">): boolean {
+  return (
+    artifact.artifact_type.toLowerCase().includes("transcript") ||
+    (artifact.title ?? "").toLowerCase().includes("transcript")
+  );
+}
+
 export function TranscriptsPage() {
-  const { data, isLoading, error } = useQuery({
+  const query = useQuery({
     queryKey: ["transcripts", "artifacts"],
     queryFn: async () => {
       const supabase = createClient();
-      const { data: arts, error: e1 } = await supabase
-        .from("artifacts")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(400);
-      if (e1) throw e1;
-      const list = (arts ?? []) as Tables<"artifacts">[];
-      return list
-        .filter(
-          (a) =>
-            String(a.artifact_type ?? "")
-              .toLowerCase()
-              .includes("transcript") ||
-            String(a.title ?? "")
-              .toLowerCase()
-              .includes("transcript")
-        )
-        .slice(0, 100);
+      const artifacts = await fetchAll<Tables<"artifacts">>((after, limit) => {
+        let query = supabase.from("artifacts").select("*").order("id").limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
+      );
+      return artifacts
+        .filter(isTranscript)
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
     },
   });
+  const [search, setSearch] = useState("");
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) {
+  const data = query.data;
+  const filtered = useMemo(() => {
+    const rows = data ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      [row.title ?? "", row.artifact_type].some((text) => text.toLowerCase().includes(q))
+    );
+  }, [data, search]);
+
+  const header = (
+    <PageHeader
+      title="Transcripts"
+      description="Interview transcripts stored as files. Open one to read it."
+      count={data ? filtered.length : undefined}
+    />
+  );
+
+  if (query.isError && !data) {
     return (
-      <p className="text-destructive">
-        {error instanceof Error ? error.message : "Error"}
-      </p>
+      <div className="space-y-6">
+        {header}
+        <ErrorState title="Transcripts couldn't load" error={query.error} onRetry={() => void query.refetch()} />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Transcripts</h1>
-        <p className="text-sm text-muted-foreground">
-          Artifacts matching transcript (type/title). Open via signed URL (requires service role on
-          server).
-        </p>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-28"> </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(data ?? []).length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground">
-                  No transcript artifacts found
-                </TableCell>
-              </TableRow>
-            ) : (
-              (data ?? []).map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium">{a.title ?? a.artifact_type}</TableCell>
-                  <TableCell>{a.artifact_type}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {a.created_at.slice(0, 10)}
-                  </TableCell>
-                  <TableCell>
-                    <ArtifactOpenButton artifact={a} />
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Full-text chunks</CardTitle>
-          <CardDescription>
-            Open an application with a linked interview transcript to search chunks in context.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Use Applications → Transcripts tab when `document_chunks` exist for the artifact.
-        </CardContent>
-      </Card>
+    <div className="space-y-6">
+      {header}
+
+      {!data ? (
+        <TableSkeleton rows={6} cols={4} label="Loading transcripts" />
+      ) : data.length === 0 ? (
+        <EmptyState
+          title="No transcripts yet"
+          description="Transcripts appear here after an interview recording has been saved."
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="transcript-search" className="sr-only">
+              Search transcripts
+            </label>
+            <Input
+              id="transcript-search"
+              type="search"
+              value={search}
+              placeholder="Title or file type"
+              onChange={(event) => setSearch(event.target.value)}
+              className="max-w-md"
+            />
+            {search ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+            ) : null}
+          </div>
+
+          {filtered.length === 0 ? (
+            <EmptyState title="No transcripts match this search" description="Try a different title." />
+          ) : (
+            <div className="rounded-xl border bg-card">
+              <Table>
+                <caption className="sr-only">Transcripts, newest first</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Title</TableHead>
+                    <TableHead scope="col">Type</TableHead>
+                    <TableHead scope="col">Added</TableHead>
+                    <TableHead scope="col">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((artifact) => (
+                    <TableRow key={artifact.id}>
+                      <TableCell className="font-medium">{artifact.title ?? "Untitled transcript"}</TableCell>
+                      <TableCell>{artifactTypeLabel(artifact.artifact_type)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        <time dateTime={artifact.created_at} title={formatRelative(artifact.created_at)}>
+                          {formatDate(artifact.created_at)}
+                        </time>
+                      </TableCell>
+                      <TableCell>
+                        <ArtifactOpenButton artifact={artifact} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

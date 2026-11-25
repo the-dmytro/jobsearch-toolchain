@@ -1,14 +1,25 @@
 "use client";
 
+import { mutationMessage, unwrapAction } from "@/components/applications/action-error";
+import { ErrorState } from "@/components/crm/error-state";
+import { PageHeader } from "@/components/crm/page-header";
+import { SafeExternalLink } from "@/components/crm/safe-external-link";
+import { TableSkeleton } from "@/components/crm/table-skeleton";
+import { formatDate, formatNumber } from "@/lib/format";
+import { normalizeScore } from "@/lib/score";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { ArtifactOpenButton } from "@/components/crm/artifact-open-button";
 import { ApplicationEditSheet } from "@/components/applications/application-edit-sheet";
+import {
+  BOARD_COLUMN_LABELS,
+  OUTCOME_LABELS,
+  type BoardColumn,
+} from "@/components/applications/application-model";
 import {
   useApplicationDetail,
   type ApplicationDetailBundle,
@@ -34,17 +45,22 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { createCommunication } from "@/lib/actions/communications";
 import { createContact } from "@/lib/actions/contacts";
 import { createInterview } from "@/lib/actions/interviews";
-import { qk } from "@/lib/query-keys";
 import { communicationInsertSchema } from "@/lib/schemas/communication";
 import { contactInsertSchema } from "@/lib/schemas/contact";
 import { interviewInsertSchema } from "@/lib/schemas/interview";
-import { normalizeStage, stageProgressPercent } from "@/lib/stages";
+import { invalidateAfterMutation } from "@/lib/mutations";
+import {
+  isStageChangeEvent,
+  normalizeStage,
+  stageFromEvent,
+  stageIndex,
+  stageProgress,
+} from "@/lib/stages";
 import { z } from "zod";
 
 function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
@@ -74,7 +90,7 @@ function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
     for (const ev of bundle.evaluations) {
       rows.push({
         at: ev.evaluated_at,
-        label: `Evaluation${ev.score != null ? ` (${ev.score})` : ""}`,
+        label: `Evaluation${normalizeScore(ev.score) !== null ? ` (${formatNumber(normalizeScore(ev.score))})` : ""}`,
         sub: ev.main_match ?? undefined,
       });
     }
@@ -87,12 +103,12 @@ function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
   return (
     <div className="space-y-3">
       {combined.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No timeline entries yet</p>
+        <p className="text-sm text-muted-foreground">No timeline entries yet.</p>
       ) : (
         combined.map((r, i) => (
           <div key={`${r.at}-${i}`} className="border-l-2 pl-3">
             <p className="text-xs text-muted-foreground">
-              {format(new Date(r.at), "yyyy-MM-dd HH:mm")}
+              {formatDate(r.at, { withTime: true })}
             </p>
             <p className="text-sm font-medium">{r.label}</p>
             {r.sub ? (
@@ -106,31 +122,43 @@ function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
 }
 
 export function ApplicationDetail({ id }: { id: string }) {
-  const { data, isLoading, error } = useApplicationDetail(id);
+  const { data, isLoading, error, refetch } = useApplicationDetail(id);
   const [editOpen, setEditOpen] = useState(false);
   const [transcriptFilter, setTranscriptFilter] = useState("");
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-full max-w-xl" />
-        <Skeleton className="h-96 w-full" />
+      <div className="space-y-6">
+        <PageHeader title="Application" description="Loading application details." />
+        <TableSkeleton rows={4} cols={3} label="Loading application" />
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <p className="text-destructive">
-        {error instanceof Error ? error.message : "Failed to load"}
-      </p>
+      <div className="space-y-6">
+        <PageHeader title="Application" />
+        <ErrorState
+          title="This application couldn't load"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+        <Link href="/applications" className="text-sm text-primary underline-offset-4 hover:underline">
+          Back to applications
+        </Link>
+      </div>
     );
   }
 
   const app = data.application;
   const title = app.opportunities?.title ?? "Application";
   const company = app.organizations?.name ?? "—";
-  const stage = normalizeStage(app.current_stage);
+  const history = data.events
+    .filter((e) => isStageChangeEvent(e.event_type))
+    .map((e) => stageFromEvent(e));
+  const progress = stageProgress(app.current_stage, history);
+  const furthest = furthestStage(app.current_stage, history);
 
   return (
     <div className="space-y-6">
@@ -158,10 +186,15 @@ export function ApplicationDetail({ id }: { id: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Stage progress</CardTitle>
-          <CardDescription>{stage.replace(/_/g, " ")}</CardDescription>
+          <CardDescription className="flex flex-wrap items-center gap-2">
+            <span>Furthest stage: {BOARD_COLUMN_LABELS[furthest]}</span>
+            {progress.terminal ? (
+              <Badge variant="outline">{OUTCOME_LABELS[progress.terminal]}</Badge>
+            ) : null}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Progress value={stageProgressPercent(app.current_stage)} />
+          <Progress value={progress.percent} />
         </CardContent>
       </Card>
 
@@ -181,7 +214,7 @@ export function ApplicationDetail({ id }: { id: string }) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Summary label="Status" value={app.status} />
             <Summary label="Stage" value={app.current_stage ?? "—"} />
-            <Summary label="Applied" value={app.applied_at ?? "—"} />
+            <Summary label="Applied" value={formatDate(app.applied_at)} />
             <Summary label="Outcome" value={app.outcome ?? "—"} />
             <Summary label="Salary" value={app.salary_requested_text ?? "—"} />
           </div>
@@ -211,9 +244,7 @@ export function ApplicationDetail({ id }: { id: string }) {
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">{c.subject ?? "Message"}</CardTitle>
                     <CardDescription>
-                      {c.sent_at
-                        ? format(new Date(c.sent_at), "yyyy-MM-dd HH:mm")
-                        : "—"}{" "}
+                      {formatDate(c.sent_at, { withTime: true })}{" "}
                       · {c.channel ?? "—"} · {c.direction ?? "—"}
                     </CardDescription>
                   </CardHeader>
@@ -242,9 +273,7 @@ export function ApplicationDetail({ id }: { id: string }) {
                       </Link>
                     </CardTitle>
                     <CardDescription>
-                      {i.scheduled_at
-                        ? format(new Date(i.scheduled_at), "yyyy-MM-dd HH:mm")
-                        : "—"}
+                      {formatDate(i.scheduled_at, { withTime: true })}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="text-sm">{i.notes ?? "—"}</CardContent>
@@ -256,12 +285,13 @@ export function ApplicationDetail({ id }: { id: string }) {
 
         <TabsContent value="transcripts" className="mt-4 space-y-4">
           <Input
+            aria-label="Filter transcript text"
             placeholder="Filter transcript text…"
             value={transcriptFilter}
             onChange={(e) => setTranscriptFilter(e.target.value)}
           />
           {data.interviews.filter((i) => i.transcript_artifact_id).length === 0 ? (
-            <p className="text-sm text-muted-foreground">No transcript artifacts linked</p>
+            <p className="text-sm text-muted-foreground">No transcripts linked yet.</p>
           ) : (
             data.interviews
               .filter((i) => i.transcript_artifact_id)
@@ -321,14 +351,12 @@ export function ApplicationDetail({ id }: { id: string }) {
               <CardContent className="space-y-2 text-sm">
                 <p>{app.opportunities.title}</p>
                 {app.opportunities.source_url ? (
-                  <a
+                  <SafeExternalLink
                     href={app.opportunities.source_url}
-                    target="_blank"
-                    rel="noreferrer"
                     className="text-primary underline"
                   >
                     Source URL
-                  </a>
+                  </SafeExternalLink>
                 ) : null}
               </CardContent>
             </Card>
@@ -344,7 +372,8 @@ export function ApplicationDetail({ id }: { id: string }) {
                 data.evaluations.map((ev) => (
                   <div key={ev.id} className="rounded-md border p-3 text-sm">
                     <p className="font-medium">
-                      Score {ev.score ?? "—"} · {ev.recommendation ?? ev.verdict ?? "—"}
+                      Score {normalizeScore(ev.score) === null ? "—" : formatNumber(normalizeScore(ev.score))} ·{" "}
+                      {ev.recommendation ?? ev.verdict ?? "—"}
                     </p>
                     <p className="text-muted-foreground">{ev.main_match}</p>
                   </div>
@@ -364,9 +393,9 @@ export function ApplicationDetail({ id }: { id: string }) {
                   <div key={s.id} className="text-sm border-b pb-2">
                     <p className="font-medium">{s.title ?? s.source_type}</p>
                     {s.source_url ? (
-                      <a href={s.source_url} className="text-primary underline" target="_blank" rel="noreferrer">
+                      <SafeExternalLink href={s.source_url} className="text-primary underline">
                         Link
-                      </a>
+                      </SafeExternalLink>
                     ) : null}
                   </div>
                 ))
@@ -377,7 +406,7 @@ export function ApplicationDetail({ id }: { id: string }) {
 
         <TabsContent value="files" className="mt-4 space-y-3">
           {data.artifacts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No artifacts</p>
+            <p className="text-sm text-muted-foreground">No files attached yet.</p>
           ) : (
             data.artifacts.map((a) => (
               <Card key={a.id}>
@@ -401,6 +430,23 @@ export function ApplicationDetail({ id }: { id: string }) {
       />
     </div>
   );
+}
+
+/**
+ * The furthest pipeline stage the application reached, from its current stage and
+ * its stage history. Declined or withdrawn applications keep the step they reached.
+ */
+function furthestStage(current: string | null, history: (string | null)[]): BoardColumn {
+  let best: BoardColumn = "applied";
+  let bestIndex = 0;
+  for (const raw of [current, ...history]) {
+    const index = stageIndex(raw);
+    if (index > bestIndex) {
+      bestIndex = index;
+      best = normalizeStage(raw) as BoardColumn;
+    }
+  }
+  return best;
 }
 
 function Summary({ label, value }: { label: string; value: string }) {
@@ -462,14 +508,14 @@ function CommunicationQuickForm({
   const mutation = useMutation({
     mutationFn: async (v: FormValues) => {
       const res = await createCommunication(v);
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      unwrapAction(res);
     },
     onSuccess: () => {
       toast.success("Logged");
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset({ ...form.getValues(), subject: "", summary: "" });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(mutationMessage(e)),
   });
 
   return (
@@ -552,14 +598,14 @@ function InterviewQuickForm({
         meeting_url: v.meeting_url || null,
         notes: v.notes || null,
       });
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      unwrapAction(res);
     },
     onSuccess: () => {
       toast.success("Interview scheduled");
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(mutationMessage(e)),
   });
 
   return (
@@ -664,12 +710,11 @@ function ContactQuickForm({
         organization_id: organizationId,
         email: v.email === "" ? undefined : v.email,
       });
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      unwrapAction(res);
     },
     onSuccess: () => {
       toast.success("Contact added");
-      void qc.invalidateQueries({ queryKey: qk.contacts });
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset({
         organization_id: organizationId,
         full_name: "",
@@ -678,7 +723,7 @@ function ContactQuickForm({
         notes: "",
       });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => toast.error(mutationMessage(e)),
   });
 
   if (!organizationId) {

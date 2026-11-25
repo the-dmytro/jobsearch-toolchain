@@ -1,13 +1,57 @@
-import { isFuture, subMilliseconds } from "date-fns";
+import {
+  differenceInCalendarDays,
+  eachWeekOfInterval,
+  endOfDay,
+  format,
+  startOfDay,
+  startOfWeek,
+  subDays,
+} from "date-fns";
 
+import type { DateRangeValue } from "@/lib/date-range-context";
+import {
+  daysSince,
+  isStalled,
+  lastActivityMs,
+  latestActivityByApplication,
+  timeOf,
+  DAY_MS,
+  type ActivityCommunicationRow,
+  type ActivityEventRow,
+} from "@/lib/activity";
+import { fetchAll, type KeysetRow } from "@/lib/fetch-all";
+import {
+  PIPELINE_STAGES,
+  bestOutcome,
+  classifyApplication,
+  eventEvidence,
+  interviewStage,
+  isInterviewHeld,
+  isStageChangeEvent,
+  readStage,
+  stageFromEvent,
+  type PipelineStage,
+  type StageOutcome,
+} from "@/lib/stages";
 import { createClient } from "@/lib/supabase/client";
-import type { Tables, Views } from "@/types/database.types";
+import { compareRunsNewestFirst, runTime } from "@/lib/run-time";
+import { normalizeScore } from "@/lib/score";
+import type { Tables } from "@/types/database.types";
 
-export type FunnelSummary = Views<"v_funnel_summary">;
-export type WeeklyActivity = Views<"v_weekly_activity">;
-export type SourceEffectiveness = Views<"v_source_effectiveness">;
-export type PipelineAging = Views<"v_pipeline_aging">;
-export type ScoreOutcome = Views<"v_score_outcomes">;
+/* ------------------------------------------------------------------ */
+/* Public types                                                        */
+/* ------------------------------------------------------------------ */
+
+export type DateBounds = {
+  start: Date;
+  end: Date;
+};
+
+/** A ratio with its sample size. `value` is 0..1, or null when `n` is 0. */
+export type Rate = {
+  value: number | null;
+  n: number;
+};
 
 export type UpcomingItem = {
   at: string;
@@ -16,37 +60,169 @@ export type UpcomingItem = {
 };
 
 export type DashboardKpis = {
+  /** Applications open now (offers still awaiting a decision count as open). */
   openApplications: number;
+  /** Applications that were open at the end of the previous period. */
+  openApplicationsPrev: number;
   appliedInRange: number;
   appliedPrevPeriod: number;
-  responseRate: number;
-  responseRatePrev: number;
+  /** Applications with any response evidence, out of those applied in range. */
+  responseRate: Rate;
+  responseRatePrev: Rate;
+  /** Interviews held in range: scheduled in range, not in the future, not cancelled or rescheduled. */
   interviewsInRange: number;
   interviewsPrev: number;
+  /** Applications applied in range that reached the offer stage (cohort, same rule as the funnel). */
+  offersInRange: number;
+  offersPrev: number;
   newOpportunities: number;
   newOpportunitiesPrev: number;
-  avgScore: number;
-  avgScorePrev: number;
+  avgScore: number | null;
+  avgScorePrev: number | null;
 };
 
-export type DateBounds = {
-  start: Date;
-  end: Date;
+export type FunnelStepKey = "applied" | "screening" | "interview" | "final" | "offer";
+
+/**
+ * One step of the cohort funnel. `count` is cumulative: applications that reached this stage
+ * or a later one. Counts never increase down the funnel, so each conversion is at most 100%.
+ */
+export type FunnelStep = {
+  key: FunnelStepKey;
+  label: string;
+  count: number;
+  /** Conversion from the previous step: count / previous count. Null for the first step. */
+  conversion: Rate | null;
+};
+
+/** Sourcing activity in the selected range, shown beside the cohort funnel. */
+export type SourcingStats = {
+  /** Opportunities created in range. */
+  opportunitiesFound: number;
+  /** Opportunities created in range that have at least one evaluation. */
+  opportunitiesEvaluated: number;
+  /** Applications whose applied date (or created date) is in range. */
+  applied: number;
+};
+
+/** Cohort funnel: applications applied in range, counted by the furthest stage they reached. */
+export type FunnelSummary = {
+  steps: FunnelStep[];
+  sourcing: SourcingStats;
+};
+
+export type WeeklyActivityPoint = {
+  /** Monday of the ISO week, yyyy-MM-dd (local). */
+  weekStart: string;
+  opportunities: number;
+  applied: number;
+  /** Applications with a first response in this week. */
+  responses: number;
+  /** Interviews held in this week. */
+  interviews: number;
+};
+
+export type SourceEffectiveness = {
+  providerId: string | null;
+  slug: string;
+  name: string;
+  opportunities: number;
+  applications: number;
+  applicationsWithInterview: number;
+  /** Applications with any response evidence. */
+  applicationsWithResponse: number;
+  responseRate: Rate;
+  offers: number;
+  appToInterview: Rate;
+};
+
+export type PipelineAgingRow = {
+  applicationId: string;
+  company: string;
+  title: string;
+  stage: PipelineStage;
+  /** Whole days since the last activity on the application. */
+  daysSinceActivity: number;
+  appliedAt: string | null;
+};
+
+export type AttentionInterview = {
+  interviewId: string;
+  applicationId: string;
+  scheduledAt: string;
+  stage: string | null;
+  company: string;
+};
+
+export type StalledApplication = {
+  applicationId: string;
+  company: string;
+  title: string;
+  stage: PipelineStage;
+  daysSinceActivity: number;
+};
+
+/** A failed automation run. */
+export type RunError = {
+  runId: string;
+  /** When the run happened (ISO), or null when no time is recorded for it. */
+  at: string | null;
+  provider: string;
+  summary: string | null;
+};
+
+export type AttentionBundle = {
+  upcomingInterviews: AttentionInterview[];
+  stalled: StalledApplication[];
+  /** Failed runs in the attention window, newest first. Partial runs are not issues. */
+  runErrors: RunError[];
+};
+
+export type DataTotals = {
+  applications: number;
+  opportunities: number;
+  interviews: number;
+  evaluations: number;
+  communications: number;
+  automationRuns: number;
 };
 
 export type DashboardBundle = {
   kpis: DashboardKpis;
-  weeklyActivity: WeeklyActivity[];
-  funnel: FunnelSummary | null;
+  weeklyActivity: WeeklyActivityPoint[];
+  funnel: FunnelSummary;
   sourceEffectiveness: SourceEffectiveness[];
-  pipelineAging: PipelineAging[];
+  pipelineAging: PipelineAgingRow[];
   upcoming: UpcomingItem[];
+  attention: AttentionBundle;
+  totals: DataTotals;
+  /** The most recent runs by runTime, newest first. */
   runs: Tables<"automation_runs">[];
-  runEvents: Tables<"automation_run_events">[];
+  /** The latest failed run by runTime, or null when none is recorded. */
+  lastFailure: RunError | null;
+};
+
+export type ScoreBucket = "0-2" | "3-4" | "5-6" | "7-8" | "9-10" | "unknown";
+
+export type ScoreOutcomeRow = {
+  bucket: ScoreBucket;
+  evaluations: number;
+  /** Evaluations whose opportunity has at least one application. */
+  withApplication: number;
+  /** Evaluations whose best application outcome is an offer. */
+  offers: number;
+  /** Evaluations whose best application outcome is a rejection. */
+  rejected: number;
+  /** Evaluations whose best application outcome is still open. */
+  open: number;
+  /** offers / withApplication. `n` is withApplication. */
+  offerRate: Rate;
+  avgScore: number | null;
 };
 
 export type OutcomeBreakdown = {
-  outcome: string;
+  outcome: StageOutcome;
+  label: string;
   count: number;
 };
 
@@ -55,10 +231,13 @@ export type DeclineReason = {
   count: number;
 };
 
-export type CompensationBySeniority = {
+/** Compensation averages for one currency and seniority. Currencies are never mixed. */
+export type CompensationRow = {
+  currency: string;
   seniority: string;
-  avgMin: number;
-  avgMax: number;
+  avgMin: number | null;
+  avgMax: number | null;
+  /** Opportunities in this group. */
   count: number;
 };
 
@@ -69,191 +248,544 @@ export type InterviewOutcome = {
 };
 
 export type InsightsBundle = {
-  scoreOutcomes: ScoreOutcome[];
+  scoreOutcomes: ScoreOutcomeRow[];
   outcomeBreakdown: OutcomeBreakdown[];
+  /** Top eight decline reasons in range, most frequent first. */
   declineReasons: DeclineReason[];
-  compensationBySeniority: CompensationBySeniority[];
+  /** Applications in range whose decline reason is not among `declineReasons`, summed. */
+  declineOther: number;
+  compensationBySeniority: CompensationRow[];
   interviewOutcomes: InterviewOutcome[];
 };
 
-function toIso(date: Date): string {
-  return date.toISOString();
+/* ------------------------------------------------------------------ */
+/* Row shapes read from Supabase                                       */
+/* ------------------------------------------------------------------ */
+
+export type ApplicationRow = Pick<
+  Tables<"applications">,
+  | "id"
+  | "opportunity_id"
+  | "organization_id"
+  | "provider_id"
+  | "status"
+  | "current_stage"
+  | "applied_at"
+  | "outcome"
+  | "decline_reason"
+  | "created_at"
+  | "updated_at"
+>;
+
+export type EventRow = Pick<
+  Tables<"application_events">,
+  "id" | "application_id" | "event_type" | "event_at" | "created_at" | "title" | "metadata"
+>;
+
+export type InterviewRow = Pick<
+  Tables<"interviews">,
+  "id" | "application_id" | "stage" | "scheduled_at" | "result"
+>;
+
+export type OpportunityRow = Pick<
+  Tables<"opportunities">,
+  | "id"
+  | "title"
+  | "organization_id"
+  | "provider_id"
+  | "created_at"
+  | "seniority"
+  | "compensation_min"
+  | "compensation_max"
+  | "compensation_currency"
+>;
+
+export type EvaluationRow = Pick<Tables<"evaluations">, "id" | "opportunity_id" | "score" | "evaluated_at">;
+
+export type CommunicationRow = Pick<
+  Tables<"communications">,
+  "id" | "application_id" | "direction" | "sent_at" | "created_at"
+>;
+
+export type OrganizationRow = Pick<Tables<"organizations">, "id" | "name">;
+
+export type ProviderRow = Pick<Tables<"providers">, "id" | "name" | "slug">;
+
+const APPLICATION_COLUMNS =
+  "id, opportunity_id, organization_id, provider_id, status, current_stage, applied_at, outcome, decline_reason, created_at, updated_at";
+const EVENT_COLUMNS = "id, application_id, event_type, event_at, created_at, title, metadata";
+const INTERVIEW_COLUMNS = "id, application_id, stage, scheduled_at, result";
+const OPPORTUNITY_COLUMNS =
+  "id, title, organization_id, provider_id, created_at, seniority, compensation_min, compensation_max, compensation_currency";
+const EVALUATION_COLUMNS = "id, opportunity_id, score, evaluated_at";
+const COMMUNICATION_COLUMNS = "id, application_id, direction, sent_at, created_at";
+const ORGANIZATION_COLUMNS = "id, name";
+const PROVIDER_COLUMNS = "id, name, slug";
+
+/**
+ * Everything the dashboard and insights need, read once and shared by every date range. Each
+ * table is read with narrow columns; the bundles are computed from this in memory.
+ */
+export type RawAnalytics = {
+  applications: ApplicationRow[];
+  events: EventRow[];
+  interviews: InterviewRow[];
+  opportunities: OpportunityRow[];
+  evaluations: EvaluationRow[];
+  communications: CommunicationRow[];
+  organizations: OrganizationRow[];
+  providers: ProviderRow[];
+  /** Every automation run. The table is small, so runs are ordered and filtered in memory by runTime. */
+  runs: Tables<"automation_runs">[];
+};
+
+export type DashboardInput = RawAnalytics;
+
+export type InsightsInput = Pick<
+  RawAnalytics,
+  "applications" | "interviews" | "opportunities" | "evaluations"
+>;
+
+/* ------------------------------------------------------------------ */
+/* Constants                                                           */
+/* ------------------------------------------------------------------ */
+
+const ATTENTION_WINDOW_DAYS = 7;
+const PIPELINE_AGING_LIMIT = 25;
+const RECENT_RUN_LIMIT = 10;
+const UPCOMING_LIMIT = 12;
+const DECLINE_REASON_LIMIT = 8;
+/** Furthest pipeline stage that counts as having reached each funnel step. */
+const FUNNEL_STEPS: ReadonlyArray<{ key: FunnelStepKey; label: string; minIndex: number }> = [
+  { key: "applied", label: "Applied", minIndex: 0 },
+  { key: "screening", label: "Screening", minIndex: 1 },
+  { key: "interview", label: "Interview", minIndex: 2 },
+  { key: "final", label: "Final / onsite", minIndex: 3 },
+  { key: "offer", label: "Offer", minIndex: 4 },
+];
+const OFFER_INDEX = 4;
+const FAILED_RUN_STATUS = "failed";
+
+export const OUTCOME_LABELS: Readonly<Record<StageOutcome, string>> = {
+  offer: "Offer",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+  ghosted: "Ghosted",
+  active: "Open",
+};
+
+/* ------------------------------------------------------------------ */
+/* Pure helpers                                                        */
+/* ------------------------------------------------------------------ */
+
+function inBounds(time: number | null, bounds: DateBounds): boolean {
+  return time !== null && time >= bounds.start.getTime() && time <= bounds.end.getTime();
 }
 
-function previousPeriod(range: DateBounds): DateBounds {
-  const durationMs = range.end.getTime() - range.start.getTime();
+/**
+ * The period of the same length that ends the day before `range` starts. Calendar-day
+ * arithmetic, so daylight saving changes do not shift the window.
+ */
+export function previousPeriod(range: DateBounds): DateBounds {
+  const days = differenceInCalendarDays(range.end, range.start) + 1;
   return {
-    start: subMilliseconds(range.start, durationMs + 1),
-    end: subMilliseconds(range.start, 1),
+    start: startOfDay(subDays(range.start, days)),
+    end: endOfDay(subDays(range.start, 1)),
   };
 }
 
-function inRange(value: string | null | undefined, range: DateBounds): boolean {
-  if (!value) return false;
-  const ts = new Date(value).getTime();
-  return ts >= range.start.getTime() && ts <= range.end.getTime();
+/**
+ * The range a bundle is computed for. "All time" starts at the earliest dated record, so the
+ * charts do not run back to 2020. Other presets are used as they are.
+ */
+export function resolveRange(
+  value: DateRangeValue,
+  input: { applications: readonly ApplicationRow[]; opportunities: readonly OpportunityRow[] }
+): DateBounds {
+  if (value.preset !== "all") return value.range;
+  let earliest: number | null = null;
+  const dates = [
+    ...input.applications.map((app) => app.applied_at ?? app.created_at),
+    ...input.opportunities.map((opp) => opp.created_at),
+  ];
+  for (const date of dates) {
+    const time = timeOf(date);
+    if (time !== null && (earliest === null || time < earliest)) earliest = time;
+  }
+  return {
+    start: earliest === null ? value.range.start : startOfDay(new Date(earliest)),
+    end: value.range.end,
+  };
 }
 
-function isOpenApplication(app: Tables<"applications">): boolean {
-  const status = (app.status ?? "active").toLowerCase();
-  const outcome = (app.outcome ?? "").toLowerCase();
-  const stage = (app.current_stage ?? "").toLowerCase();
-  if (["declined", "rejected", "withdrawn", "closed"].includes(status)) return false;
-  if (["declined", "rejected", "withdrawn"].includes(outcome)) return false;
-  if (["declined", "rejected", "withdrawn"].includes(stage)) return false;
-  return true;
+function rate(hits: number, n: number): Rate {
+  return { value: n > 0 ? hits / n : null, n };
 }
 
-function responseRateFor(
-  applications: Tables<"applications">[],
-  events: Tables<"application_events">[],
-  range: DateBounds
-): number {
-  const inWindow = applications.filter((app) =>
-    inRange(app.applied_at ?? app.created_at, range)
-  );
-  if (inWindow.length === 0) return 0;
-  const responded = new Set(
-    events
-      .filter((event) =>
-        ["reply", "interview_invite", "response"].includes(event.event_type.toLowerCase())
-      )
-      .map((event) => event.application_id)
-  );
-  const hit = inWindow.filter((app) => responded.has(app.id)).length;
-  return Math.round((hit / inWindow.length) * 100);
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
 }
 
-function averageScore(
-  evaluations: Array<{ score: number | null; evaluated_at: string }>,
-  range: DateBounds
-): number {
-  const scores = evaluations
-    .filter((row) => inRange(row.evaluated_at, range))
-    .map((row) => row.score)
-    .filter((score): score is number => score != null && !Number.isNaN(Number(score)))
-    .map(Number);
-  if (scores.length === 0) return 0;
-  return Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10;
-}
-
-function countMap(values: Array<string | null | undefined>): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const value of values) {
-    const key = (value ?? "unknown").trim() || "unknown";
-    map.set(key, (map.get(key) ?? 0) + 1);
+function groupBy<T>(rows: readonly T[], key: (row: T) => string | null | undefined): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const row of rows) {
+    const k = key(row);
+    if (!k) continue;
+    const list = map.get(k);
+    if (list) list.push(row);
+    else map.set(k, [row]);
   }
   return map;
 }
 
-export async function fetchDashboardBundle(range: DateBounds): Promise<DashboardBundle> {
-  const supabase = createClient();
-  const prev = previousPeriod(range);
-  const startIso = toIso(range.start);
-  const endIso = toIso(range.end);
+function scoreBucket(score: number | null): ScoreBucket {
+  const value = normalizeScore(score);
+  if (value === null) return "unknown";
+  if (value < 3) return "0-2";
+  if (value < 5) return "3-4";
+  if (value < 7) return "5-6";
+  if (value < 9) return "7-8";
+  return "9-10";
+}
 
-  const [
-    funnelRes,
-    weeklyRes,
-    sourceRes,
-    agingRes,
-    appsRes,
-    eventsRes,
-    interviewsRes,
-    oppsRes,
-    evalsRes,
-    runsRes,
-    runEventsRes,
-  ] = await Promise.all([
-    supabase.from("v_funnel_summary").select("*").maybeSingle(),
-    supabase
-      .from("v_weekly_activity")
-      .select("*")
-      .gte("week_start", startIso.slice(0, 10))
-      .lte("week_start", endIso.slice(0, 10))
-      .order("week_start", { ascending: true }),
-    supabase.from("v_source_effectiveness").select("*"),
-    supabase
-      .from("v_pipeline_aging")
-      .select("*")
-      .order("days_in_stage", { ascending: false })
-      .limit(25),
-    supabase.from("applications").select("*"),
-    supabase.from("application_events").select("*"),
-    supabase.from("interviews").select("*").order("scheduled_at", { ascending: true }),
-    supabase.from("opportunities").select("id, created_at"),
-    supabase.from("evaluations").select("id, score, evaluated_at"),
-    supabase
-      .from("automation_runs")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(10),
-    supabase
-      .from("automation_run_events")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(50),
-  ]);
+const SCORE_BUCKET_ORDER: ScoreBucket[] = ["0-2", "3-4", "5-6", "7-8", "9-10", "unknown"];
 
-  const errors = [
-    funnelRes.error,
-    weeklyRes.error,
-    sourceRes.error,
-    agingRes.error,
-    appsRes.error,
-    eventsRes.error,
-    interviewsRes.error,
-    oppsRes.error,
-    evalsRes.error,
-    runsRes.error,
-    runEventsRes.error,
-  ].filter(Boolean);
-  if (errors.length) {
-    throw new Error(errors[0]?.message ?? "Failed to load dashboard analytics");
+function pipelineRank(stage: PipelineStage | null): number {
+  return stage === null ? -1 : PIPELINE_STAGES.indexOf(stage);
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-application facts                                               */
+/* ------------------------------------------------------------------ */
+
+type AppFact = {
+  id: string;
+  opportunityId: string | null;
+  providerId: string | null;
+  company: string;
+  title: string;
+  declineReason: string | null;
+  /** applied_at, or created_at when there is no applied date, as epoch ms. */
+  appliedAt: number | null;
+  /** Furthest pipeline stage reached, from the current values and the event and interview history. */
+  stage: PipelineStage;
+  outcome: StageOutcome;
+  open: boolean;
+  /** Whole days since the last activity, in the past. */
+  daysSinceActivity: number;
+  /**
+   * When the application last closed, from its latest closing event. Null while open. For an
+   * application closed with no dated signal this is the applied date.
+   */
+  closedAt: number | null;
+  /** Dated closing events, oldest first. An application closed with no dated signal has its applied date here. */
+  closingTimes: number[];
+  /** Dated stage changes to an open stage (a reopening), oldest first. */
+  reopeningTimes: number[];
+  /** Any response evidence: a reply, an invitation, an inbound message, an interview or a rejection. */
+  responded: boolean;
+  /** Earliest dated response evidence, or null. */
+  responseAt: number | null;
+  /** Index of the furthest pipeline stage reached (see PIPELINE_STAGES). Never below 0. */
+  reachedIndex: number;
+};
+
+type FactInput = {
+  applications: ApplicationRow[];
+  events?: EventRow[];
+  interviews: InterviewRow[];
+  opportunities: OpportunityRow[];
+  communications?: CommunicationRow[];
+  organizations?: OrganizationRow[];
+};
+
+function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
+  const orgName = new Map((input.organizations ?? []).map((org) => [org.id, org.name]));
+  const oppById = new Map(input.opportunities.map((opp) => [opp.id, opp]));
+  const events = input.events ?? [];
+  const communications = input.communications ?? [];
+  const eventsByApp = groupBy(events, (e) => e.application_id);
+  const commsByApp = groupBy(communications, (c) => c.application_id);
+  const interviewsByApp = groupBy(input.interviews, (i) => i.application_id);
+  const latest = latestActivityByApplication(
+    {
+      events: events as ActivityEventRow[],
+      communications: communications as ActivityCommunicationRow[],
+      interviews: input.interviews,
+    },
+    nowMs
+  );
+
+  return input.applications.map((app) => {
+    const opp = app.opportunity_id ? oppById.get(app.opportunity_id) : undefined;
+    const orgId = app.organization_id ?? opp?.organization_id ?? null;
+    const appliedAt = timeOf(app.applied_at) ?? timeOf(app.created_at);
+    const state = classifyApplication(app);
+    const interviews = interviewsByApp.get(app.id) ?? [];
+
+    let reachedIndex = pipelineRank(state.stage);
+    const closingTimes: number[] = [];
+    const reopeningTimes: number[] = [];
+    const responseTimes: number[] = [];
+    let responded = false;
+
+    for (const event of eventsByApp.get(app.id) ?? []) {
+      const time = timeOf(event.event_at) ?? timeOf(event.created_at);
+      if (isStageChangeEvent(event.event_type)) {
+        // Stage changes written by the CRM: the target stage counts as reached, a closed target
+        // closes the application, and they are not employer responses.
+        const target = readStage(stageFromEvent(event));
+        reachedIndex = Math.max(reachedIndex, pipelineRank(target.stage));
+        if (time !== null) {
+          if (target.closed) closingTimes.push(time);
+          else if (target.stage) reopeningTimes.push(time);
+        }
+        continue;
+      }
+      const evidence = eventEvidence(event.event_type);
+      reachedIndex = Math.max(reachedIndex, pipelineRank(evidence.stage));
+      if (evidence.closing && time !== null) closingTimes.push(time);
+      if (evidence.response) {
+        responded = true;
+        if (time !== null) responseTimes.push(time);
+      }
+    }
+
+    for (const comm of commsByApp.get(app.id) ?? []) {
+      if (comm.direction?.trim().toLowerCase() !== "inbound") continue;
+      responded = true;
+      const time = timeOf(comm.sent_at) ?? timeOf(comm.created_at);
+      if (time !== null) responseTimes.push(time);
+    }
+
+    for (const interview of interviews) {
+      responded = true;
+      reachedIndex = Math.max(reachedIndex, pipelineRank(interviewStage(interview.stage)));
+      const time = timeOf(interview.scheduled_at);
+      if (time !== null) responseTimes.push(time);
+    }
+
+    // A rejection the employer gave (by status or outcome) is a response even without a dated event.
+    if (!state.open && state.outcome === "rejected") responded = true;
+
+    closingTimes.sort((a, b) => a - b);
+    reopeningTimes.sort((a, b) => a - b);
+    // Closed with no dated closing signal: treat the applied date as the close, so it is not open
+    // in any period that starts after it.
+    if (!state.open && closingTimes.length === 0 && appliedAt !== null) closingTimes.push(appliedAt);
+    const closedAt = state.open ? null : (closingTimes[closingTimes.length - 1] ?? null);
+
+    const days = daysSince(lastActivityMs(app, latest, nowMs), nowMs) ?? 0;
+
+    return {
+      id: app.id,
+      opportunityId: app.opportunity_id ?? null,
+      providerId: app.provider_id ?? opp?.provider_id ?? null,
+      company: (orgId && orgName.get(orgId)) || "Unknown company",
+      title: opp?.title || "Untitled role",
+      declineReason: app.decline_reason?.trim() || null,
+      appliedAt,
+      stage: state.stage,
+      outcome: state.outcome,
+      open: state.open,
+      daysSinceActivity: days,
+      closedAt,
+      closingTimes,
+      reopeningTimes,
+      responded,
+      responseAt: responseTimes.length > 0 ? Math.min(...responseTimes) : null,
+      reachedIndex: Math.max(0, reachedIndex),
+    };
+  });
+}
+
+/** Latest value in an ascending list that is at or before `t`, or null. */
+function lastAtOrBefore(sortedTimes: readonly number[], t: number): number | null {
+  let found: number | null = null;
+  for (const time of sortedTimes) {
+    if (time > t) break;
+    found = time;
   }
+  return found;
+}
 
-  const applications = (appsRes.data ?? []) as Tables<"applications">[];
-  const events = (eventsRes.data ?? []) as Tables<"application_events">[];
-  const interviews = (interviewsRes.data ?? []) as Tables<"interviews">[];
-  const opportunities = oppsRes.data ?? [];
-  const evaluations = evalsRes.data ?? [];
+/**
+ * An application was open at time `t` if it had been applied for by then and was not closed at
+ * `t`. It is closed at `t` when the last closing event at or before `t` has no reopening after it
+ * (a stage change to an open stage) at or before `t`. A reopening at the same instant does not count.
+ */
+function openAt(fact: AppFact, t: number): boolean {
+  if (fact.appliedAt === null || fact.appliedAt > t) return false;
+  const lastClose = lastAtOrBefore(fact.closingTimes, t);
+  if (lastClose === null) return true;
+  const lastReopen = lastAtOrBefore(fact.reopeningTimes, t);
+  return lastReopen !== null && lastReopen > lastClose;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dashboard computation                                               */
+/* ------------------------------------------------------------------ */
+
+type DatedInterview = { row: InterviewRow; time: number };
+
+export function computeDashboardBundle(
+  input: DashboardInput,
+  range: DateBounds,
+  now: Date = new Date()
+): DashboardBundle {
+  const nowMs = now.getTime();
+  const prev = previousPeriod(range);
+  const facts = buildAppFacts(input, nowMs);
+
+  const allInterviewTimes: DatedInterview[] = [];
+  const heldInterviews: DatedInterview[] = [];
+  for (const row of input.interviews) {
+    const time = timeOf(row.scheduled_at);
+    if (time === null) continue;
+    allInterviewTimes.push({ row, time });
+    if (isInterviewHeld(row.result, time, nowMs)) heldInterviews.push({ row, time });
+  }
+  const interviewsIn = (bounds: DateBounds) =>
+    heldInterviews.filter((x) => inBounds(x.time, bounds)).length;
+
+  const oppTimes = input.opportunities.map((o) => ({ row: o, time: timeOf(o.created_at) }));
+  const oppsIn = (bounds: DateBounds) => oppTimes.filter((x) => inBounds(x.time, bounds));
+
+  const scoredIn = (bounds: DateBounds): number[] =>
+    input.evaluations
+      .filter((e) => inBounds(timeOf(e.evaluated_at), bounds))
+      .map((e) => normalizeScore(e.score))
+      .filter((s): s is number => s !== null);
+
+  const appsIn = (bounds: DateBounds) => facts.filter((f) => inBounds(f.appliedAt, bounds));
+  const responseRateFor = (list: AppFact[]) =>
+    rate(list.filter((f) => f.responded).length, list.length);
+
+  const curApps = appsIn(range);
+  const prevApps = appsIn(prev);
+  const prevEnd = prev.end.getTime();
 
   const kpis: DashboardKpis = {
-    openApplications: applications.filter(isOpenApplication).length,
-    appliedInRange: applications.filter((app) =>
-      inRange(app.applied_at ?? app.created_at, range)
-    ).length,
-    appliedPrevPeriod: applications.filter((app) =>
-      inRange(app.applied_at ?? app.created_at, prev)
-    ).length,
-    responseRate: responseRateFor(applications, events, range),
-    responseRatePrev: responseRateFor(applications, events, prev),
-    interviewsInRange: interviews.filter((row) =>
-      inRange(row.scheduled_at ?? row.completed_at ?? row.created_at, range)
-    ).length,
-    interviewsPrev: interviews.filter((row) =>
-      inRange(row.scheduled_at ?? row.completed_at ?? row.created_at, prev)
-    ).length,
-    newOpportunities: opportunities.filter((row) => inRange(row.created_at, range)).length,
-    newOpportunitiesPrev: opportunities.filter((row) => inRange(row.created_at, prev)).length,
-    avgScore: averageScore(evaluations, range),
-    avgScorePrev: averageScore(evaluations, prev),
+    openApplications: facts.filter((f) => f.open).length,
+    openApplicationsPrev: facts.filter((f) => openAt(f, prevEnd)).length,
+    appliedInRange: curApps.length,
+    appliedPrevPeriod: prevApps.length,
+    responseRate: responseRateFor(curApps),
+    responseRatePrev: responseRateFor(prevApps),
+    interviewsInRange: interviewsIn(range),
+    interviewsPrev: interviewsIn(prev),
+    offersInRange: curApps.filter((f) => f.reachedIndex >= OFFER_INDEX).length,
+    offersPrev: prevApps.filter((f) => f.reachedIndex >= OFFER_INDEX).length,
+    newOpportunities: oppsIn(range).length,
+    newOpportunitiesPrev: oppsIn(prev).length,
+    avgScore: average(scoredIn(range)),
+    avgScorePrev: average(scoredIn(prev)),
   };
 
+  /*
+   * Cohort funnel: applications applied in range. Each step counts the cohort members that
+   * reached that stage or a later one, so counts never increase down the funnel and each
+   * conversion is at most 100%. Sourcing stats are reported beside it, for the same range.
+   */
+  const evaluatedOppIds = new Set(input.evaluations.map((e) => e.opportunity_id));
+  const counts = FUNNEL_STEPS.map((step) => ({
+    key: step.key,
+    label: step.label,
+    count: curApps.filter((f) => f.reachedIndex >= step.minIndex).length,
+  }));
+  const rangeOpps = oppsIn(range);
+  const funnel: FunnelSummary = {
+    steps: counts.map((step, index) => ({
+      ...step,
+      conversion: index === 0 ? null : rate(step.count, counts[index - 1].count),
+    })),
+    sourcing: {
+      opportunitiesFound: rangeOpps.length,
+      opportunitiesEvaluated: rangeOpps.filter((o) => evaluatedOppIds.has(o.row.id)).length,
+      applied: curApps.length,
+    },
+  };
+
+  const weeklyActivity = buildWeekly(facts, oppTimes, heldInterviews, range);
+  const sourceEffectiveness = buildSources(input, facts, heldInterviews, range);
+
+  /* Pipeline aging and attention. */
+  const openFacts = facts.filter((f) => f.open);
+  const pipelineAging: PipelineAgingRow[] = [...openFacts]
+    .sort((a, b) => b.daysSinceActivity - a.daysSinceActivity)
+    .slice(0, PIPELINE_AGING_LIMIT)
+    .map((f) => ({
+      applicationId: f.id,
+      company: f.company,
+      title: f.title,
+      stage: f.stage,
+      daysSinceActivity: f.daysSinceActivity,
+      appliedAt: f.appliedAt === null ? null : new Date(f.appliedAt).toISOString(),
+    }));
+
+  const providerName = new Map(input.providers.map((p) => [p.id, p.name]));
+  const factById = new Map(facts.map((f) => [f.id, f]));
+
+  const attentionWindowEnd = nowMs + ATTENTION_WINDOW_DAYS * DAY_MS;
+  const upcomingInterviews: AttentionInterview[] = allInterviewTimes
+    .filter((x) => x.time > nowMs && x.time <= attentionWindowEnd)
+    .sort((a, b) => a.time - b.time)
+    .map(({ row, time }) => ({
+      interviewId: row.id,
+      applicationId: row.application_id,
+      scheduledAt: new Date(time).toISOString(),
+      stage: row.stage,
+      company: factById.get(row.application_id)?.company ?? "Unknown company",
+    }));
+
+  const stalled: StalledApplication[] = openFacts
+    .filter((f) => isStalled(f.open, f.daysSinceActivity))
+    .sort((a, b) => b.daysSinceActivity - a.daysSinceActivity)
+    .map((f) => ({
+      applicationId: f.id,
+      company: f.company,
+      title: f.title,
+      stage: f.stage,
+      daysSinceActivity: f.daysSinceActivity,
+    }));
+
+  /* Automation runs, newest first by when they ran. Runs with no recorded time sort last. */
+  const runsNewestFirst = [...input.runs].sort(compareRunsNewestFirst);
+  const failedRuns = runsNewestFirst.filter((run) => isFailedRun(run));
+  const toRunError = (run: Tables<"automation_runs">): RunError => {
+    const time = runTime(run);
+    return {
+      runId: run.id,
+      at: time === null ? null : new Date(time).toISOString(),
+      provider: (run.provider_id && providerName.get(run.provider_id)) || "Unknown provider",
+      summary: run.summary,
+    };
+  };
+  const runErrors: RunError[] = failedRuns
+    .filter((run) => {
+      const t = runTime(run);
+      return t !== null && t >= nowMs - ATTENTION_WINDOW_DAYS * DAY_MS && t <= nowMs;
+    })
+    .map(toRunError);
+  const lastFailure = failedRuns.length > 0 ? toRunError(failedRuns[0]) : null;
+
+  /* Upcoming: future interviews and dated application events, chronological. */
   const upcoming: UpcomingItem[] = [];
-  for (const interview of interviews) {
-    if (interview.scheduled_at && isFuture(new Date(interview.scheduled_at))) {
+  for (const { row, time } of allInterviewTimes) {
+    if (time > nowMs) {
       upcoming.push({
-        at: interview.scheduled_at,
-        label: `Interview${interview.stage ? ` (${interview.stage})` : ""}`,
-        href: `/interviews/${interview.id}`,
+        at: new Date(time).toISOString(),
+        label: `Interview${row.stage ? ` (${row.stage})` : ""}`,
+        href: `/interviews/${row.id}`,
       });
     }
   }
-  for (const event of events) {
-    if (event.event_at && isFuture(new Date(event.event_at))) {
+  for (const event of input.events) {
+    const time = timeOf(event.event_at);
+    if (time !== null && time > nowMs) {
       upcoming.push({
-        at: event.event_at,
+        at: new Date(time).toISOString(),
         label: event.title ?? event.event_type,
         href: `/applications/${event.application_id}`,
       });
@@ -261,124 +793,349 @@ export async function fetchDashboardBundle(range: DateBounds): Promise<Dashboard
   }
   upcoming.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
+  const totals: DataTotals = {
+    applications: input.applications.length,
+    opportunities: input.opportunities.length,
+    interviews: input.interviews.length,
+    evaluations: input.evaluations.length,
+    communications: input.communications.length,
+    automationRuns: input.runs.length,
+  };
+
   return {
     kpis,
-    weeklyActivity: (weeklyRes.data ?? []) as WeeklyActivity[],
-    funnel: (funnelRes.data as FunnelSummary | null) ?? null,
-    sourceEffectiveness: (sourceRes.data ?? []) as SourceEffectiveness[],
-    pipelineAging: (agingRes.data ?? []) as PipelineAging[],
-    upcoming: upcoming.slice(0, 12),
-    runs: (runsRes.data ?? []) as Tables<"automation_runs">[],
-    runEvents: (runEventsRes.data ?? []) as Tables<"automation_run_events">[],
+    weeklyActivity,
+    funnel,
+    sourceEffectiveness,
+    pipelineAging,
+    upcoming: upcoming.slice(0, UPCOMING_LIMIT),
+    attention: { upcomingInterviews, stalled, runErrors },
+    totals,
+    runs: runsNewestFirst.slice(0, RECENT_RUN_LIMIT),
+    lastFailure,
   };
 }
 
-export async function fetchInsightsBundle(range: DateBounds): Promise<InsightsBundle> {
-  const supabase = createClient();
-  const startIso = toIso(range.start);
-  const endIso = toIso(range.end);
+/** A run whose status is failed. Status is matched case-insensitively. Partial runs are not failures. */
+function isFailedRun(run: Pick<Tables<"automation_runs">, "status">): boolean {
+  return run.status.trim().toLowerCase() === FAILED_RUN_STATUS;
+}
 
-  const [scoreRes, appsRes, oppsRes, interviewsRes] = await Promise.all([
-    supabase.from("v_score_outcomes").select("*"),
-    supabase
-      .from("applications")
-      .select("id, outcome, decline_reason, applied_at, created_at, updated_at")
-      .gte("updated_at", startIso)
-      .lte("updated_at", endIso),
-    supabase
-      .from("opportunities")
-      .select("id, seniority, compensation_min, compensation_max, created_at")
-      .gte("created_at", startIso)
-      .lte("created_at", endIso),
-    supabase
-      .from("interviews")
-      .select("id, stage, result, scheduled_at, completed_at, created_at")
-      .gte("created_at", startIso)
-      .lte("created_at", endIso),
-  ]);
+function weekKey(time: number): string {
+  return format(startOfWeek(new Date(time), { weekStartsOn: 1 }), "yyyy-MM-dd");
+}
 
-  const errors = [scoreRes.error, appsRes.error, oppsRes.error, interviewsRes.error].filter(
-    Boolean
-  );
-  if (errors.length) {
-    throw new Error(errors[0]?.message ?? "Failed to load insights analytics");
+function buildWeekly(
+  facts: AppFact[],
+  opps: Array<{ row: OpportunityRow; time: number | null }>,
+  interviews: DatedInterview[],
+  range: DateBounds
+): WeeklyActivityPoint[] {
+  const candidates: number[] = [];
+  for (const f of facts) if (f.appliedAt !== null) candidates.push(f.appliedAt);
+  for (const o of opps) if (o.time !== null) candidates.push(o.time);
+  for (const i of interviews) candidates.push(i.time);
+  if (candidates.length === 0) return [];
+
+  const start = new Date(Math.max(range.start.getTime(), Math.min(...candidates)));
+  if (start.getTime() > range.end.getTime()) return [];
+  const weeks = eachWeekOfInterval({ start, end: range.end }, { weekStartsOn: 1 });
+
+  const buckets = new Map<string, Omit<WeeklyActivityPoint, "weekStart">>();
+  const bucket = (key: string) => {
+    let entry = buckets.get(key);
+    if (!entry) {
+      entry = { opportunities: 0, applied: 0, responses: 0, interviews: 0 };
+      buckets.set(key, entry);
+    }
+    return entry;
+  };
+
+  for (const f of facts) {
+    if (inBounds(f.appliedAt, range) && f.appliedAt !== null) bucket(weekKey(f.appliedAt)).applied += 1;
+    if (inBounds(f.responseAt, range) && f.responseAt !== null) bucket(weekKey(f.responseAt)).responses += 1;
+  }
+  for (const o of opps) {
+    if (inBounds(o.time, range) && o.time !== null) bucket(weekKey(o.time)).opportunities += 1;
+  }
+  for (const i of interviews) {
+    if (inBounds(i.time, range)) bucket(weekKey(i.time)).interviews += 1;
   }
 
-  const applications = appsRes.data ?? [];
-  const opportunities = oppsRes.data ?? [];
-  const interviews = interviewsRes.data ?? [];
+  return weeks.map((week) => {
+    const key = format(week, "yyyy-MM-dd");
+    const entry = buckets.get(weekKey(week.getTime()));
+    return {
+      weekStart: key,
+      opportunities: entry?.opportunities ?? 0,
+      applied: entry?.applied ?? 0,
+      responses: entry?.responses ?? 0,
+      interviews: entry?.interviews ?? 0,
+    };
+  });
+}
 
-  const outcomeCounts = countMap(
-    applications
-      .map((row) => row.outcome)
-      .filter((value): value is string => Boolean(value && value.trim()))
+function buildSources(
+  input: DashboardInput,
+  facts: AppFact[],
+  heldInterviews: DatedInterview[],
+  range: DateBounds
+): SourceEffectiveness[] {
+  const interviewedApps = new Set(heldInterviews.map((i) => i.row.application_id));
+  const providerRows = new Map(input.providers.map((p) => [p.id, p]));
+
+  const oppsInRange = input.opportunities.filter((o) => inBounds(timeOf(o.created_at), range));
+  const appsInRange = facts.filter((f) => inBounds(f.appliedAt, range));
+
+  const keys = new Set<string>(input.providers.map((p) => p.id));
+  for (const o of oppsInRange) keys.add(o.provider_id ?? "");
+  for (const f of appsInRange) keys.add(f.providerId ?? "");
+
+  const rows: SourceEffectiveness[] = [];
+  for (const key of keys) {
+    const providerId = key === "" ? null : key;
+    const provider = providerId ? providerRows.get(providerId) : undefined;
+    const opps = oppsInRange.filter((o) => (o.provider_id ?? null) === providerId).length;
+    const apps = appsInRange.filter((f) => (f.providerId ?? null) === providerId);
+    const withInterview = apps.filter((f) => interviewedApps.has(f.id)).length;
+    const withResponse = apps.filter((f) => f.responded).length;
+    const offers = apps.filter((f) => f.outcome === "offer").length;
+    rows.push({
+      providerId,
+      slug: provider?.slug ?? (providerId ? providerId : "unassigned"),
+      name: provider?.name ?? (providerId ? "Unknown provider" : "Unassigned"),
+      opportunities: opps,
+      applications: apps.length,
+      applicationsWithInterview: withInterview,
+      applicationsWithResponse: withResponse,
+      responseRate: rate(withResponse, apps.length),
+      offers,
+      appToInterview: rate(withInterview, apps.length),
+    });
+  }
+  return rows.sort((a, b) => b.applications - a.applications || b.opportunities - a.opportunities);
+}
+
+/* ------------------------------------------------------------------ */
+/* Insights computation                                                */
+/* ------------------------------------------------------------------ */
+
+export function computeInsightsBundle(
+  input: InsightsInput,
+  range: DateBounds,
+  now: Date = new Date()
+): InsightsBundle {
+  const facts = buildAppFacts(
+    { applications: input.applications, interviews: input.interviews, opportunities: input.opportunities },
+    now.getTime()
   );
-  const outcomeBreakdown = Array.from(outcomeCounts.entries())
-    .map(([outcome, count]) => ({ outcome, count }))
+  const curApps = facts.filter((f) => inBounds(f.appliedAt, range));
+
+  const outcomeCounts = new Map<StageOutcome, number>();
+  for (const f of curApps) outcomeCounts.set(f.outcome, (outcomeCounts.get(f.outcome) ?? 0) + 1);
+  const outcomeBreakdown: OutcomeBreakdown[] = Array.from(outcomeCounts.entries())
+    .map(([outcome, count]) => ({ outcome, label: OUTCOME_LABELS[outcome], count }))
     .sort((a, b) => b.count - a.count);
 
-  const declineCounts = countMap(
-    applications
-      .map((row) => row.decline_reason)
-      .filter((value): value is string => Boolean(value && value.trim()))
-  );
-  const declineReasons = Array.from(declineCounts.entries())
+  const declineCounts = new Map<string, number>();
+  for (const f of curApps) {
+    if (f.declineReason) declineCounts.set(f.declineReason, (declineCounts.get(f.declineReason) ?? 0) + 1);
+  }
+  const rankedDeclines: DeclineReason[] = Array.from(declineCounts.entries())
     .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 12);
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  const declineReasons = rankedDeclines.slice(0, DECLINE_REASON_LIMIT);
+  const declineOther = rankedDeclines
+    .slice(DECLINE_REASON_LIMIT)
+    .reduce((sum, row) => sum + row.count, 0);
 
-  const compensationBuckets = new Map<
-    string,
-    { minSum: number; maxSum: number; minCount: number; maxCount: number; count: number }
+  /* Score distribution: one row per evaluation, best outcome across its applications. */
+  const appsByOpp = groupBy(facts, (f) => f.opportunityId);
+  const scoreAcc = new Map<
+    ScoreBucket,
+    { evaluations: number; withApplication: number; offers: number; rejected: number; open: number; scores: number[] }
   >();
-  for (const opp of opportunities) {
-    const seniority = (opp.seniority ?? "unspecified").toLowerCase();
-    const bucket = compensationBuckets.get(seniority) ?? {
+  for (const evaluation of input.evaluations) {
+    if (!inBounds(timeOf(evaluation.evaluated_at), range)) continue;
+    const bucket = scoreBucket(evaluation.score);
+    const acc = scoreAcc.get(bucket) ?? {
+      evaluations: 0,
+      withApplication: 0,
+      offers: 0,
+      rejected: 0,
+      open: 0,
+      scores: [],
+    };
+    acc.evaluations += 1;
+    const score = normalizeScore(evaluation.score);
+    if (score !== null) acc.scores.push(score);
+    const apps = appsByOpp.get(evaluation.opportunity_id) ?? [];
+    if (apps.length > 0) {
+      acc.withApplication += 1;
+      const best = bestOutcome(apps.map((a) => a.outcome));
+      if (best === "offer") acc.offers += 1;
+      else if (best === "rejected") acc.rejected += 1;
+      else if (best === "active") acc.open += 1;
+    }
+    scoreAcc.set(bucket, acc);
+  }
+  const scoreOutcomes: ScoreOutcomeRow[] = SCORE_BUCKET_ORDER.filter((b) => scoreAcc.has(b)).map((bucket) => {
+    const acc = scoreAcc.get(bucket)!;
+    return {
+      bucket,
+      evaluations: acc.evaluations,
+      withApplication: acc.withApplication,
+      offers: acc.offers,
+      rejected: acc.rejected,
+      open: acc.open,
+      offerRate: rate(acc.offers, acc.withApplication),
+      avgScore: average(acc.scores),
+    };
+  });
+
+  /* Compensation grouped by currency and seniority. Never mixes currencies. */
+  const compGroups = new Map<
+    string,
+    { currency: string; seniority: string; minSum: number; minCount: number; maxSum: number; maxCount: number; count: number }
+  >();
+  for (const opp of input.opportunities) {
+    if (!inBounds(timeOf(opp.created_at), range)) continue;
+    const currency = opp.compensation_currency?.trim().toUpperCase() || "unknown";
+    const seniority = opp.seniority?.trim().toLowerCase() || "unspecified";
+    const key = `${currency}\u0000${seniority}`;
+    const group = compGroups.get(key) ?? {
+      currency,
+      seniority,
       minSum: 0,
-      maxSum: 0,
       minCount: 0,
+      maxSum: 0,
       maxCount: 0,
       count: 0,
     };
-    bucket.count += 1;
+    group.count += 1;
     if (opp.compensation_min != null) {
-      bucket.minSum += Number(opp.compensation_min);
-      bucket.minCount += 1;
+      group.minSum += Number(opp.compensation_min);
+      group.minCount += 1;
     }
     if (opp.compensation_max != null) {
-      bucket.maxSum += Number(opp.compensation_max);
-      bucket.maxCount += 1;
+      group.maxSum += Number(opp.compensation_max);
+      group.maxCount += 1;
     }
-    compensationBuckets.set(seniority, bucket);
+    compGroups.set(key, group);
   }
-  const compensationBySeniority = Array.from(compensationBuckets.entries())
-    .map(([seniority, bucket]) => ({
-      seniority,
-      avgMin: bucket.minCount ? Math.round(bucket.minSum / bucket.minCount) : 0,
-      avgMax: bucket.maxCount ? Math.round(bucket.maxSum / bucket.maxCount) : 0,
-      count: bucket.count,
+  const compensationBySeniority: CompensationRow[] = Array.from(compGroups.values())
+    .map((g) => ({
+      currency: g.currency,
+      seniority: g.seniority,
+      avgMin: g.minCount ? Math.round(g.minSum / g.minCount) : null,
+      avgMax: g.maxCount ? Math.round(g.maxSum / g.maxCount) : null,
+      count: g.count,
     }))
-    .sort((a, b) => b.count - a.count);
+    .sort((a, b) => b.count - a.count || a.currency.localeCompare(b.currency) || a.seniority.localeCompare(b.seniority));
 
-  const interviewCounts = new Map<string, number>();
-  for (const interview of interviews) {
-    const stage = (interview.stage ?? "unknown").toLowerCase();
-    const result = (interview.result ?? "pending").toLowerCase();
-    const key = `${stage}::${result}`;
-    interviewCounts.set(key, (interviewCounts.get(key) ?? 0) + 1);
+  /* Interview results by stage, in range by scheduled_at. */
+  const interviewCounts = new Map<string, { stage: string; result: string; count: number }>();
+  for (const interview of input.interviews) {
+    if (!inBounds(timeOf(interview.scheduled_at), range)) continue;
+    const stage = interview.stage?.trim() ? interviewStage(interview.stage) : "unknown";
+    const result = interview.result?.trim().toLowerCase() || "pending";
+    const key = `${stage}\u0000${result}`;
+    const entry = interviewCounts.get(key) ?? { stage, result, count: 0 };
+    entry.count += 1;
+    interviewCounts.set(key, entry);
   }
-  const interviewOutcomes = Array.from(interviewCounts.entries())
-    .map(([key, count]) => {
-      const [stage, result] = key.split("::");
-      return { stage, result, count };
-    })
-    .sort((a, b) => b.count - a.count);
+  const interviewOutcomes = Array.from(interviewCounts.values()).sort((a, b) => b.count - a.count);
 
   return {
-    scoreOutcomes: (scoreRes.data ?? []) as ScoreOutcome[],
+    scoreOutcomes,
     outcomeBreakdown,
     declineReasons,
+    declineOther,
     compensationBySeniority,
     interviewOutcomes,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Data loading                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Reads every analytics table once. The result does not depend on the date range, so switching
+ * ranges never fetches again; each range is computed from this in memory.
+ */
+export async function fetchRawAnalytics(): Promise<RawAnalytics> {
+  const supabase = createClient();
+
+  const [
+    applications,
+    events,
+    interviews,
+    opportunities,
+    evaluations,
+    communications,
+    organizations,
+    providers,
+    runs,
+  ] = await Promise.all([
+    fetchAll<ApplicationRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("applications").select(APPLICATION_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<EventRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("application_events").select(EVENT_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<InterviewRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("interviews").select(INTERVIEW_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<OpportunityRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("opportunities").select(OPPORTUNITY_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<EvaluationRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("evaluations").select(EVALUATION_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<CommunicationRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("communications").select(COMMUNICATION_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<OrganizationRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("organizations").select(ORGANIZATION_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<ProviderRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("providers").select(PROVIDER_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    // Every run is read: the table is small, and "latest" and "recent" are defined by runTime,
+    // which the database cannot order on (it lives in started_at, finished_at or run_key).
+    fetchAll<Tables<"automation_runs"> & KeysetRow>((after, limit) => {
+      let query = supabase.from("automation_runs").select("*").order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+  ]);
+
+  return {
+    applications,
+    events,
+    interviews,
+    opportunities,
+    evaluations,
+    communications,
+    organizations,
+    providers,
+    runs,
   };
 }

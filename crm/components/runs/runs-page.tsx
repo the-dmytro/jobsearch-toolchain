@@ -2,6 +2,14 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useMemo, useState } from "react";
+
+import { EmptyState } from "@/components/crm/empty-state";
+import { ErrorState } from "@/components/crm/error-state";
+import { PageHeader } from "@/components/crm/page-header";
+import { TableSkeleton } from "@/components/crm/table-skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -10,79 +18,153 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { fetchAll } from "@/lib/fetch-all";
+import { formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { qk } from "@/lib/query-keys";
+import { compareRunsNewestFirst, runTime } from "@/lib/run-time";
 import { createClient } from "@/lib/supabase/client";
+import type { Tables } from "@/types/database.types";
+
+export type RunRow = Tables<"automation_runs"> & {
+  providers: { slug: string; name: string } | null;
+};
 
 export function RunsPage() {
-  const { data, isLoading, error } = useQuery({
+  const query = useQuery({
     queryKey: qk.runs,
     queryFn: async () => {
       const supabase = createClient();
-      const { data: rows, error: err } = await supabase
-        .from("automation_runs")
-        .select(
+      return fetchAll<RunRow>((after, limit) => {
+        let query = supabase
+          .from("automation_runs")
+          .select(
+            `
+            *,
+            providers ( slug, name )
           `
-          *,
-          providers ( slug, name )
-        `
-        )
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (err) throw err;
-      return rows ?? [];
+          )
+          .order("id")
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
+      );
     },
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) {
+  const [search, setSearch] = useState("");
+
+  const sorted = useMemo(() => [...(query.data ?? [])].sort(compareRunsNewestFirst), [query.data]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter((row) =>
+      [row.run_key ?? "", row.id, row.providers?.name ?? "", row.status, row.summary ?? ""].some(
+        (text) => text.toLowerCase().includes(q)
+      )
+    );
+  }, [sorted, search]);
+
+  const header = (
+    <PageHeader
+      title="Automation runs"
+      description="Recent searches and their results, newest first."
+      count={query.data ? filtered.length : undefined}
+    />
+  );
+
+  if (query.isError && !query.data) {
     return (
-      <p className="text-destructive">
-        {error instanceof Error ? error.message : "Error"}
-      </p>
+      <div className="space-y-6">
+        {header}
+        <ErrorState title="Runs couldn't load" error={query.error} onRetry={() => void query.refetch()} />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Automation runs</h1>
-        <p className="text-sm text-muted-foreground">{data?.length ?? 0} runs</p>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Run</TableHead>
-              <TableHead>Provider</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Counts</TableHead>
-              <TableHead>Finished</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(data ?? []).map((row: Record<string, unknown>) => (
-              <TableRow key={String(row.id)}>
-                <TableCell>
-                  <Link href={`/runs/${row.id}`} className="font-medium hover:underline">
-                    {String(row.run_key ?? row.id).slice(0, 40)}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  {(row.providers as { name?: string } | null)?.name ?? "—"}
-                </TableCell>
-                <TableCell>{String(row.status)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  src {String(row.source_items_count)} · opp {String(row.opportunities_count)} · eval{" "}
-                  {String(row.evaluations_count)}
-                </TableCell>
-                <TableCell className="text-xs whitespace-nowrap">
-                  {String(row.finished_at ?? row.created_at ?? "").slice(0, 16)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+    <div className="space-y-6">
+      {header}
+
+      {!query.data ? (
+        <TableSkeleton rows={6} cols={5} label="Loading runs" />
+      ) : sorted.length === 0 ? (
+        <EmptyState
+          title="No runs yet"
+          description="Runs appear here after an automated search has finished at least once."
+        />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="run-search" className="sr-only">
+              Search runs
+            </label>
+            <Input
+              id="run-search"
+              type="search"
+              value={search}
+              placeholder="Run, provider, status or summary"
+              onChange={(event) => setSearch(event.target.value)}
+              className="max-w-md"
+            />
+            {search ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>
+                Clear search
+              </Button>
+            ) : null}
+          </div>
+
+          {filtered.length === 0 ? (
+            <EmptyState title="No runs match this search" description="Try a different provider or status." />
+          ) : (
+            <div className="rounded-xl border bg-card">
+              <Table>
+                <caption className="sr-only">Automation runs, newest first</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Run</TableHead>
+                    <TableHead scope="col">Provider</TableHead>
+                    <TableHead scope="col">Status</TableHead>
+                    <TableHead scope="col">Results</TableHead>
+                    <TableHead scope="col">Run time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((row) => {
+                    const time = runTime(row);
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell>
+                          <Link href={`/runs/${row.id}`} className="font-medium hover:underline">
+                            {row.run_key ?? "Run"}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{row.providers?.name ?? "—"}</TableCell>
+                        <TableCell className="capitalize">{row.status.replace(/_/g, " ")}</TableCell>
+                        <TableCell className="text-xs tabular-nums text-muted-foreground">
+                          {formatNumber(row.source_items_count)} sources ·{" "}
+                          {formatNumber(row.opportunities_count)} opportunities ·{" "}
+                          {formatNumber(row.evaluations_count)} evaluations
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          {time === null ? (
+                            <span className="text-muted-foreground">Time not recorded</span>
+                          ) : (
+                            <time dateTime={new Date(time).toISOString()} title={formatRelative(time)}>
+                              {formatDate(time, { withTime: true })}
+                            </time>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

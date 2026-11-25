@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Global gitignores often exclude lib/; this app keeps source there
+!lib/
+!lib/**

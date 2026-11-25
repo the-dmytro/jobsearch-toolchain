@@ -1,99 +1,93 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 
-import { PageHeader } from "@/components/crm/page-header";
 import { ErrorBoundary } from "@/components/crm/error-boundary";
+import { PageHeader } from "@/components/crm/page-header";
+import { AttentionCard } from "@/components/dashboard/attention-card";
+import type { CardStatus } from "@/components/dashboard/dashboard-card";
 import { FunnelCard } from "@/components/dashboard/funnel-card";
+import { hasPreviousPeriod, rangePhrase } from "@/components/dashboard/labels";
 import { KpiRow } from "@/components/dashboard/kpi-row";
 import { PipelineAgingCard } from "@/components/dashboard/pipeline-aging-card";
 import { RunHealthCard } from "@/components/dashboard/run-health-card";
 import { SourceEffectivenessCard } from "@/components/dashboard/source-effectiveness-card";
-import { UpcomingCard } from "@/components/dashboard/upcoming-card";
-import { VelocityCard } from "@/components/dashboard/velocity-card";
+import { WeeklyActivityCard } from "@/components/dashboard/weekly-activity-card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { fetchDashboardBundle } from "@/lib/analytics";
-import { useDateRange } from "@/lib/date-range-context";
+import { useDashboardBundle } from "@/lib/analytics-query";
+import { type DateRangeValue, useDateRange } from "@/lib/date-range-context";
 import { isDemoMode } from "@/lib/demo";
-import { qk } from "@/lib/query-keys";
 
-function DashboardSkeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <Skeleton key={index} className="h-28 rounded-lg" />
-        ))}
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Skeleton className="h-96 rounded-lg" />
-        <Skeleton className="h-96 rounded-lg" />
-      </div>
-    </div>
-  );
+function rangeSentence(value: DateRangeValue): string {
+  const phrase = rangePhrase(value);
+  const sentence = phrase.charAt(0).toUpperCase() + phrase.slice(1);
+  return hasPreviousPeriod(value)
+    ? `${sentence}. Changes compare with the same length of time before.`
+    : `${sentence}. Changes are not shown because there is no earlier period.`;
 }
 
 export function DashboardPage() {
   const { value: dateRange } = useDateRange();
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: qk.dashboard(dateRange),
-    queryFn: () => fetchDashboardBundle(dateRange.range),
-  });
+  const query = useDashboardBundle(dateRange);
+  const data = query.data;
+
+  // Every card receives the same load state, so each one shows its own skeleton, error or empty state.
+  const status: CardStatus = {
+    loading: query.isPending,
+    error: query.isError ? query.error : undefined,
+    onRetry: () => void query.refetch(),
+  };
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex min-w-0 flex-col gap-8">
       <PageHeader
         title="Dashboard"
-        description={
-          isDemoMode()
-            ? "Synthetic demo data for evaluation (NEXT_PUBLIC_DEMO_MODE)."
-            : "Analytics from Postgres views with RLS."
-        }
+        description={rangeSentence(dateRange)}
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void refetch()}
-            disabled={isFetching}
-          >
-            <RefreshCwIcon className={isFetching ? "size-4 animate-spin" : "size-4"} />
-            Refresh
-          </Button>
+          <>
+            {isDemoMode() ? <Badge variant="outline">Demo data</Badge> : null}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+            >
+              <RefreshCwIcon className={query.isFetching ? "size-4 animate-spin" : "size-4"} />
+              Refresh
+            </Button>
+          </>
         }
       />
 
-      {isLoading ? <DashboardSkeleton /> : null}
+      <ErrorBoundary title="Dashboard failed to render">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
+          <AttentionCard attention={data?.attention} status={status} />
 
-      {isError ? (
-        <p className="text-destructive">
-          Failed to load dashboard: {error instanceof Error ? error.message : "Unknown error"}
-        </p>
-      ) : null}
+          <KpiRow
+            kpis={data?.kpis}
+            weeklyActivity={data?.weeklyActivity}
+            status={status}
+            showDeltas={hasPreviousPeriod(dateRange)}
+          />
 
-      {data ? (
-        <ErrorBoundary title="Dashboard failed to render">
-          <div className="flex flex-col gap-6">
-            <KpiRow kpis={data.kpis} weeklyActivity={data.weeklyActivity} />
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <FunnelCard funnel={data.funnel} />
-              <VelocityCard weeklyActivity={data.weeklyActivity} />
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <SourceEffectivenessCard sources={data.sourceEffectiveness} />
-              <PipelineAgingCard pipeline={data.pipelineAging} />
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <UpcomingCard upcoming={data.upcoming} />
-              <RunHealthCard runs={data.runs} runEvents={data.runEvents} />
-            </div>
+          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+            <FunnelCard funnel={data?.funnel} status={status} />
+            <WeeklyActivityCard weeklyActivity={data?.weeklyActivity} status={status} />
           </div>
-        </ErrorBoundary>
-      ) : null}
+
+          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+            <SourceEffectivenessCard sources={data?.sourceEffectiveness} status={status} />
+            <PipelineAgingCard
+              pipeline={data?.pipelineAging}
+              openCount={data?.kpis.openApplications}
+              status={status}
+            />
+          </div>
+
+          <RunHealthCard runs={data?.runs} lastFailure={data?.lastFailure} status={status} />
+        </div>
+      </ErrorBoundary>
     </div>
   );
 }

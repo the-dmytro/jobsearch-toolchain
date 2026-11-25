@@ -6,7 +6,13 @@ import { useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  nonce,
+}: {
+  children: React.ReactNode;
+  nonce?: string;
+}) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -21,7 +27,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem nonce={nonce}>
         <TooltipProvider>{children}</TooltipProvider>
         <Toaster richColors position="top-center" />
       </ThemeProvider>

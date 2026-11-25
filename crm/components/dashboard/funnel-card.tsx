@@ -1,94 +1,68 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
-
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import type { FunnelSummary } from "@/lib/analytics";
-
-const chartConfig = {
-  count: { label: "Count", color: "var(--chart-1)" },
-} satisfies ChartConfig;
+import { DashboardCard, type CardStatus } from "@/components/dashboard/dashboard-card";
+import type { FunnelStep, FunnelSummary } from "@/lib/analytics";
+import { formatNumber, formatPercent } from "@/lib/format";
 
 type FunnelCardProps = {
-  funnel: FunnelSummary | null;
+  funnel?: FunnelSummary;
+  status: CardStatus;
 };
 
-export function FunnelCard({ funnel }: FunnelCardProps) {
-  const data = [
-    { stage: "Opportunities", count: funnel?.opportunities_count ?? 0, conversion: null },
-    {
-      stage: "Evaluated",
-      count: funnel?.evaluated_count ?? 0,
-      conversion: funnel?.opp_to_eval_pct,
-    },
-    {
-      stage: "Applied",
-      count: funnel?.applied_count ?? 0,
-      conversion: funnel?.eval_to_applied_pct,
-    },
-    {
-      stage: "Interviewing",
-      count: funnel?.interviewing_count ?? 0,
-      conversion: funnel?.applied_to_interview_pct,
-    },
-    {
-      stage: "Offer",
-      count: funnel?.offer_count ?? 0,
-      conversion: funnel?.interview_to_offer_pct,
-    },
-  ];
+function conversionText(step: FunnelStep, previous: FunnelStep): string {
+  const conversion = step.conversion;
+  if (!conversion || conversion.value == null) {
+    return `No applications at ${previous.label.toLowerCase()} yet`;
+  }
+  return `${formatPercent(conversion.value)} of ${previous.label.toLowerCase()} (${formatNumber(step.count)} of ${formatNumber(conversion.n)})`;
+}
 
-  const colors = [
-    "var(--chart-1)",
-    "var(--chart-2)",
-    "var(--chart-3)",
-    "var(--chart-4)",
-    "var(--chart-5)",
-  ];
+/**
+ * Cohort funnel: horizontal bars with direct count labels. Each bar counts applications
+ * that reached that stage or a later one, so bars only shrink as you go down. The text
+ * list is the accessible alternative to the bars.
+ */
+export function FunnelCard({ funnel, status }: FunnelCardProps) {
+  const steps = funnel?.steps ?? [];
+  const applied = steps[0]?.count ?? 0;
+  const sourcing = funnel?.sourcing;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Funnel</CardTitle>
-        <CardDescription>Pipeline snapshot with step conversion rates</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={chartConfig} className="h-72 w-full">
-          <BarChart data={data} layout="vertical" margin={{ left: 8, right: 24 }}>
-            <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-            <XAxis type="number" allowDecimals={false} />
-            <YAxis type="category" dataKey="stage" width={96} tick={{ fontSize: 12 }} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar dataKey="count" radius={4}>
-              {data.map((entry, index) => (
-                <Cell key={entry.stage} fill={colors[index % colors.length]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ChartContainer>
-        <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-          {data.slice(1).map((step) => (
-            <div key={step.stage} className="flex justify-between rounded-md border px-3 py-2">
-              <span>{step.stage}</span>
-              <span className="font-medium text-foreground">
-                {step.conversion != null ? `${step.conversion}%` : "—"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+    <DashboardCard
+      title="Funnel"
+      description="Applications applied in range, counted by the furthest stage each one reached."
+      status={status}
+      isEmpty={funnel !== undefined && applied === 0}
+      emptyTitle="No applications in this range"
+      emptyDescription="Applications dated in the selected range appear here as they are counted."
+      footer={
+        sourcing ? (
+          <p className="border-t pt-3 text-xs text-muted-foreground tabular-nums">
+            Sourcing in range: {formatNumber(sourcing.opportunitiesFound)} opportunities found,{" "}
+            {formatNumber(sourcing.opportunitiesEvaluated)} evaluated, {formatNumber(sourcing.applied)} applied.
+          </p>
+        ) : null
+      }
+    >
+      <ol className="space-y-3" aria-label="Funnel steps, applications and conversion">
+        {steps.map((step, index) => {
+          const width = applied > 0 ? (step.count / applied) * 100 : 0;
+          return (
+            <li key={step.key} className="space-y-1">
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="font-medium">{step.label}</span>
+                <span className="font-semibold tabular-nums">{formatNumber(step.count)}</span>
+              </div>
+              <div aria-hidden="true" className="h-2 overflow-hidden rounded-sm bg-muted">
+                <div className="h-full rounded-sm bg-chart-1" style={{ width: `${width}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground tabular-nums">
+                {index === 0 ? "Starting point" : conversionText(step, steps[index - 1])}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+    </DashboardCard>
   );
 }

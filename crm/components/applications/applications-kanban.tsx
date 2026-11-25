@@ -3,143 +3,242 @@
 import {
   DndContext,
   type DragEndEvent,
+  KeyboardSensor,
   PointerSensor,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { GripVerticalIcon, LoaderCircleIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
-import { toast } from "sonner";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { changeApplicationStage } from "@/lib/actions/applications";
-import { qk } from "@/lib/query-keys";
-import { CANONICAL_STAGES, normalizeStage } from "@/lib/stages";
-import type { ApplicationWithJoins } from "./use-applications-query";
 
-function groupByStage(apps: ApplicationWithJoins[]) {
-  const map = new Map<string, ApplicationWithJoins[]>();
-  for (const s of CANONICAL_STAGES) map.set(s, []);
-  for (const a of apps) {
-    const col = normalizeStage(a.current_stage);
-    if (!map.has(col)) map.set(col, []);
-    map.get(col)!.push(a);
+import { formatDuration, formatNumber } from "@/lib/format";
+import type { CanonicalStage } from "@/lib/stages";
+import { cn } from "@/lib/utils";
+
+import {
+  BOARD_COLUMNS,
+  BOARD_COLUMN_LABELS,
+  type ApplicationRow,
+  type BoardColumn,
+} from "./application-model";
+import { boardKeyboardCoordinates } from "./board-keyboard";
+import { OutcomeBadge } from "./stage-badge";
+import { useStageMove } from "./use-stage-move";
+
+const SCREEN_READER_INSTRUCTIONS =
+  "To move an application, press space or enter on its Move button. Then use the arrow keys to choose a stage, and press space or enter to drop it. Press escape to cancel.";
+
+type DragData = { label: string; column: BoardColumn };
+
+function isBoardColumn(value: unknown): value is BoardColumn {
+  return typeof value === "string" && (BOARD_COLUMNS as readonly string[]).includes(value);
+}
+
+function readDragData(data: unknown): DragData | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Partial<DragData>;
+  if (typeof record.label !== "string" || !isBoardColumn(record.column)) return null;
+  return { label: record.label, column: record.column };
+}
+
+/** Stage written to the server for a column. The Closed column records an employer rejection. */
+export function stageForColumn(column: BoardColumn): CanonicalStage {
+  return column === "closed" ? "rejected" : column;
+}
+
+/** Plain-language announcements for keyboard and screen reader users. */
+export function describeDragStart(data: DragData): string {
+  return `Picked up ${data.label}, in ${BOARD_COLUMN_LABELS[data.column]}. Use the arrow keys to choose a stage, then press space or enter to drop it. Press escape to cancel.`;
+}
+
+export function describeDragOver(data: DragData, overId: string | null | undefined): string {
+  if (!isBoardColumn(overId)) return `${data.label} is not over a stage.`;
+  return `${data.label} is over ${BOARD_COLUMN_LABELS[overId]}.`;
+}
+
+export function describeDragEnd(data: DragData, overId: string | null | undefined): string {
+  if (!isBoardColumn(overId)) {
+    return `${data.label} was dropped outside the board. Nothing changed.`;
   }
-  return map;
+  if (overId === data.column) return `${data.label} stayed in ${BOARD_COLUMN_LABELS[overId]}.`;
+  return `Dropped ${data.label} into ${BOARD_COLUMN_LABELS[overId]}. Saving the new stage.`;
 }
 
-function DroppableColumn({
-  stage,
-  children,
-}: {
-  stage: string;
-  children: React.ReactNode;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage });
-  return (
-    <div
-      ref={setNodeRef}
-      className={`flex min-h-[200px] flex-col rounded-lg border bg-muted/20 ${isOver ? "ring-2 ring-ring" : ""}`}
-    >
-      {children}
-    </div>
-  );
+export function describeDragCancel(data: DragData): string {
+  return `Move cancelled. ${data.label} stays in ${BOARD_COLUMN_LABELS[data.column]}.`;
 }
 
-function DraggableCard({ app }: { app: ApplicationWithJoins }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: app.id,
-  });
+const announcements = {
+  onDragStart({ active }: { active: { data: { current?: unknown } } }) {
+    const data = readDragData(active.data.current);
+    return data ? describeDragStart(data) : undefined;
+  },
+  onDragOver({ active, over }: { active: { data: { current?: unknown } }; over: { id: unknown } | null }) {
+    const data = readDragData(active.data.current);
+    return data ? describeDragOver(data, over ? String(over.id) : null) : undefined;
+  },
+  onDragEnd({ active, over }: { active: { data: { current?: unknown } }; over: { id: unknown } | null }) {
+    const data = readDragData(active.data.current);
+    return data ? describeDragEnd(data, over ? String(over.id) : null) : undefined;
+  },
+  onDragCancel({ active }: { active: { data: { current?: unknown } } }) {
+    const data = readDragData(active.data.current);
+    return data ? describeDragCancel(data) : undefined;
+  },
+};
+
+function BoardCard({ row, pending }: { row: ApplicationRow; pending: boolean }) {
+  const company = row.company || "Company unknown";
+  const role = row.role || "Untitled role";
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
+    useDraggable({
+      id: row.id,
+      data: { label: `${company}, ${role}`, column: row.column } satisfies DragData,
+      disabled: pending,
+    });
 
   const style = transform
-    ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        opacity: isDragging ? 0.6 : 1,
-      }
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
 
   return (
-    <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
-      <Link href={`/applications/${app.id}`}>
-        <Card className="cursor-grab active:cursor-grabbing hover:bg-muted/40">
-          <CardHeader className="p-3 pb-1">
-            <p className="text-sm font-medium leading-snug">
-              {app.opportunities?.title ?? "Role"}
+    <li
+      ref={setNodeRef}
+      style={style}
+      aria-busy={pending || undefined}
+      className={cn(
+        "rounded-lg border bg-card p-3 shadow-xs",
+        isDragging && "opacity-60 shadow-md"
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <Link
+            href={`/applications/${row.id}`}
+            className="block rounded-sm text-sm font-medium leading-snug text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {role}
+          </Link>
+          <p className="truncate text-xs text-muted-foreground">{company}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            {row.column === "closed" ? <OutcomeBadge outcome={row.outcome} /> : null}
+            {row.daysSinceActivity !== null ? (
+              <span className={cn("tabular-nums", row.stalled && "font-medium text-warning")}>
+                Last activity {formatDuration(row.daysSinceActivity)} ago
+                {row.stalled ? " · Stalled" : ""}
+              </span>
+            ) : null}
+          </div>
+          {pending ? (
+            <p role="status" className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LoaderCircleIcon aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+              Saving…
             </p>
-            <p className="text-xs text-muted-foreground">
-              {app.organizations?.name ?? "Company"}
-            </p>
-          </CardHeader>
-          <CardContent className="p-3 pt-0 text-xs text-muted-foreground">
-            {app.status}
-          </CardContent>
-        </Card>
-      </Link>
-    </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...listeners}
+          {...attributes}
+          disabled={pending}
+          aria-label={`Move ${company} ${role}`}
+          className="-mr-1 -mt-1 flex size-11 shrink-0 touch-none cursor-grab items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
+        >
+          <GripVerticalIcon aria-hidden="true" className="size-4" />
+        </button>
+      </div>
+    </li>
   );
 }
 
-export function ApplicationsKanban({ data }: { data: ApplicationWithJoins[] }) {
-  const qc = useQueryClient();
+function BoardColumnSection({
+  column,
+  count,
+  children,
+}: {
+  column: BoardColumn;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: column });
+  const headingId = `board-${column}-heading`;
+  return (
+    <section
+      ref={setNodeRef}
+      aria-labelledby={headingId}
+      className={cn(
+        "flex w-[16rem] shrink-0 snap-start flex-col rounded-xl border bg-muted/30 md:w-auto md:min-w-0",
+        isOver && "ring-2 ring-ring"
+      )}
+    >
+      <header className="flex items-center justify-between gap-2 border-b px-3 py-2">
+        <h2 id={headingId} className="text-sm font-semibold">
+          {BOARD_COLUMN_LABELS[column]}
+        </h2>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {formatNumber(count)}
+          <span className="sr-only"> applications</span>
+        </span>
+      </header>
+      <div className="flex flex-1 flex-col gap-2 p-2">{children}</div>
+    </section>
+  );
+}
 
-  const grouped = useMemo(() => groupByStage(data), [data]);
+function groupByColumn(rows: ApplicationRow[]): Map<BoardColumn, ApplicationRow[]> {
+  const groups = new Map<BoardColumn, ApplicationRow[]>(BOARD_COLUMNS.map((c) => [c, []]));
+  for (const row of rows) groups.get(row.column)?.push(row);
+  return groups;
+}
+
+/**
+ * Stage board. Each card keeps its own link. Moving uses the card's Move button,
+ * with a pointer or the keyboard. The board updates at once and rolls back if
+ * the server refuses the change.
+ */
+export function ApplicationsKanban({ rows }: { rows: ApplicationRow[] }) {
+  const { move, pendingIds } = useStageMove();
+  const groups = useMemo(() => groupByColumn(rows), [rows]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: boardKeyboardCoordinates })
   );
 
-  const mutation = useMutation({
-    mutationFn: async (p: { applicationId: string; newStage: string }) => {
-      const res = await changeApplicationStage(p);
-      if (res && "error" in res) {
-        const err = res.error;
-        throw new Error(typeof err === "string" ? err : JSON.stringify(err));
-      }
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.applications });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
   function onDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over) return;
-    const appId = String(active.id);
-
-    let targetStage: string | null = null;
-    if (CANONICAL_STAGES.includes(over.id as (typeof CANONICAL_STAGES)[number])) {
-      targetStage = over.id as string;
-    } else {
-      const overApp = data.find((a) => a.id === over.id);
-      if (overApp) targetStage = normalizeStage(overApp.current_stage);
-    }
-    if (!targetStage) return;
-
-    mutation.mutate({ applicationId: appId, newStage: targetStage });
+    const data = readDragData(event.active.data.current);
+    const overId = event.over?.id;
+    if (!data || !isBoardColumn(overId) || overId === data.column) return;
+    move(String(event.active.id), stageForColumn(overId));
   }
 
   return (
-    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-        {CANONICAL_STAGES.map((stage) => (
-          <DroppableColumn key={stage} stage={stage}>
-            <div className="border-b px-2 py-2 text-xs font-semibold capitalize">
-              {stage.replace(/_/g, " ")}
-            </div>
-            <ScrollArea className="min-h-[320px] flex-1 p-2">
-              <div className="flex flex-col gap-2">
-                {(grouped.get(stage) ?? []).map((app) => (
-                  <DraggableCard key={app.id} app={app} />
-                ))}
-              </div>
-            </ScrollArea>
-          </DroppableColumn>
-        ))}
+    <DndContext
+      sensors={sensors}
+      onDragEnd={onDragEnd}
+      accessibility={{ announcements, screenReaderInstructions: { draggable: SCREEN_READER_INSTRUCTIONS } }}
+    >
+      <div className="relative -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-6 md:overflow-visible md:px-0">
+        {BOARD_COLUMNS.map((column) => {
+          const cards = groups.get(column) ?? [];
+          return (
+            <BoardColumnSection key={column} column={column} count={cards.length}>
+              {cards.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-muted-foreground">No applications</p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {cards.map((row) => (
+                    <BoardCard key={row.id} row={row} pending={pendingIds.has(row.id)} />
+                  ))}
+                </ul>
+              )}
+            </BoardColumnSection>
+          );
+        })}
       </div>
     </DndContext>
   );
