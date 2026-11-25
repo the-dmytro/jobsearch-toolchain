@@ -1,6 +1,6 @@
 "use client";
 
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 
 import {
@@ -18,7 +18,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import type { WeeklyActivity } from "@/lib/analytics";
+import type { WeeklyActivityPoint } from "@/lib/analytics";
 
 const chartConfig = {
   applications: { label: "Applications", color: "var(--chart-1)" },
@@ -33,15 +33,15 @@ function rollingAverage(values: number[], index: number, window = 4) {
 }
 
 type VelocityCardProps = {
-  weeklyActivity: WeeklyActivity[];
+  weeklyActivity: WeeklyActivityPoint[];
 };
 
 export function VelocityCard({ weeklyActivity }: VelocityCardProps) {
-  const appValues = weeklyActivity.map((w) => w.applications ?? 0);
+  const appValues = weeklyActivity.map((w) => w.applied);
   const chartData = weeklyActivity.map((row, index) => ({
-    week: format(new Date(row.week_start), "MMM d"),
-    applications: row.applications ?? 0,
-    interviews: row.interviews ?? 0,
+    week: format(parseISO(row.weekStart), "MMM d"),
+    applications: row.applied,
+    interviews: row.interviews,
     rollingApplications: rollingAverage(appValues, index),
   }));
 

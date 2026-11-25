@@ -37,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createContact } from "@/lib/actions/contacts";
+import { invalidateAfterMutation } from "@/lib/mutations";
 import { qk } from "@/lib/query-keys";
 import { contactInsertSchema } from "@/lib/schemas/contact";
 import { createClient } from "@/lib/supabase/client";
@@ -90,11 +91,11 @@ export function ContactsPage() {
         organization_id: v.organization_id ?? null,
         email: v.email === "" ? undefined : v.email,
       });
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Created");
-      void qc.invalidateQueries({ queryKey: qk.contacts });
+      void invalidateAfterMutation(qc);
       form.reset();
     },
     onError: (e: Error) => toast.error(e.message),

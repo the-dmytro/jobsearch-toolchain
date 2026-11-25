@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createCommunication } from "@/lib/actions/communications";
+import { invalidateAfterMutation } from "@/lib/mutations";
 import { qk } from "@/lib/query-keys";
 import { communicationInsertSchema } from "@/lib/schemas/communication";
 import { createClient } from "@/lib/supabase/client";
@@ -95,11 +96,11 @@ export function CommunicationsPage() {
   const mutation = useMutation({
     mutationFn: async (v: FormValues) => {
       const res = await createCommunication(v);
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Logged");
-      void qc.invalidateQueries({ queryKey: qk.communications });
+      void invalidateAfterMutation(qc);
       form.reset({
         ...form.getValues(),
         subject: "",

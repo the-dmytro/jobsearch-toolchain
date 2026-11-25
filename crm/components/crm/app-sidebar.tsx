@@ -28,6 +28,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { createClient } from "@/lib/supabase/client";
 
@@ -45,15 +46,25 @@ const nav = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
+/**
+ * Primary navigation. On screens under 768px the sidebar is an off-canvas sheet
+ * (shadcn `Sheet` via `isMobile`); choosing a link closes it. The current page is
+ * marked with `aria-current="page"`.
+ */
 export function AppSidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   async function signOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  }
+
+  function closeOnMobile() {
+    if (isMobile) setOpenMobile(false);
   }
 
   return (
@@ -65,24 +76,30 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Navigate</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {nav.map(({ href, label, icon: Icon }) => (
-                <SidebarMenuItem key={href}>
-                  <SidebarMenuButton
-                    render={<Link href={href} />}
-                    isActive={
-                      href === "/"
-                        ? pathname === "/"
-                        : pathname === href || pathname.startsWith(`${href}/`)
-                    }
-                    tooltip={label}
-                  >
-                    <Icon />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+            <nav aria-label="Main">
+              <SidebarMenu>
+                {nav.map(({ href, label, icon: Icon }) => {
+                  const isActive =
+                    href === "/"
+                      ? pathname === "/"
+                      : pathname === href || pathname.startsWith(`${href}/`);
+                  return (
+                    <SidebarMenuItem key={href}>
+                      <SidebarMenuButton
+                        render={<Link href={href} />}
+                        isActive={isActive}
+                        aria-current={isActive ? "page" : undefined}
+                        tooltip={label}
+                        onClick={closeOnMobile}
+                      >
+                        <Icon />
+                        <span>{label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </nav>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

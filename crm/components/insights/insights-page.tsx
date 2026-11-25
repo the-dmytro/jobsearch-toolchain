@@ -33,8 +33,8 @@ import { isDemoMode } from "@/lib/demo";
 import { qk } from "@/lib/query-keys";
 
 const scoreChartConfig = {
-  evaluation_count: { label: "Evaluations", color: "var(--chart-1)" },
-  offer_count: { label: "Offers", color: "var(--chart-2)" },
+  evaluations: { label: "Evaluations", color: "var(--chart-1)" },
+  offers: { label: "Offers", color: "var(--chart-2)" },
 } satisfies ChartConfig;
 
 const outcomeChartConfig = {
@@ -92,11 +92,11 @@ export function InsightsPage() {
               <ChartContainer config={scoreChartConfig} className="h-72 w-full">
                 <BarChart data={data.scoreOutcomes}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="score_bucket" />
+                  <XAxis dataKey="bucket" />
                   <YAxis allowDecimals={false} width={32} />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="evaluation_count" fill="var(--color-evaluation_count)" radius={4} />
-                  <Bar dataKey="offer_count" fill="var(--color-offer_count)" radius={4} />
+                  <Bar dataKey="evaluations" fill="var(--color-evaluations)" radius={4} />
+                  <Bar dataKey="offers" fill="var(--color-offers)" radius={4} />
                 </BarChart>
               </ChartContainer>
             </CardContent>
@@ -114,7 +114,7 @@ export function InsightsPage() {
                 <ChartContainer config={outcomeChartConfig} className="h-72 w-full">
                   <BarChart data={data.outcomeBreakdown}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="outcome" tick={{ fontSize: 11 }} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                     <YAxis allowDecimals={false} width={32} />
                     <ChartTooltip content={<ChartTooltipContent />} />
                     <Bar dataKey="count" fill="var(--color-count)" radius={4} />
@@ -151,7 +151,9 @@ export function InsightsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Compensation by seniority</CardTitle>
-              <CardDescription>Average min/max from opportunities in range</CardDescription>
+              <CardDescription>
+                Average min/max per currency from opportunities in range
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {data.compensationBySeniority.length === 0 ? (
@@ -161,6 +163,7 @@ export function InsightsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Seniority</TableHead>
+                      <TableHead>Currency</TableHead>
                       <TableHead>Avg min</TableHead>
                       <TableHead>Avg max</TableHead>
                       <TableHead>Roles</TableHead>
@@ -168,10 +171,11 @@ export function InsightsPage() {
                   </TableHeader>
                   <TableBody>
                     {data.compensationBySeniority.map((row) => (
-                      <TableRow key={row.seniority}>
+                      <TableRow key={`${row.currency}-${row.seniority}`}>
                         <TableCell className="capitalize">{row.seniority}</TableCell>
-                        <TableCell>{row.avgMin.toLocaleString()}</TableCell>
-                        <TableCell>{row.avgMax.toLocaleString()}</TableCell>
+                        <TableCell>{row.currency}</TableCell>
+                        <TableCell>{row.avgMin?.toLocaleString() ?? "—"}</TableCell>
+                        <TableCell>{row.avgMax?.toLocaleString() ?? "—"}</TableCell>
                         <TableCell>{row.count}</TableCell>
                       </TableRow>
                     ))}

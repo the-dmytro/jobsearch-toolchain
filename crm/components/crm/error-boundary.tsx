@@ -1,68 +1,51 @@
 "use client";
 
-import { AlertTriangleIcon } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ErrorState } from "@/components/crm/error-state";
 
 type ErrorBoundaryProps = {
   children: ReactNode;
+  /** Headline shown in the fallback, for example "Insights failed to render". */
   title?: string;
+  /** Fixed message for the fallback. Defaults to a message derived from the error. */
   description?: string;
 };
 
 type ErrorBoundaryState = {
-  error: Error | null;
+  error: unknown;
+  hasError: boolean;
 };
 
-export class ErrorBoundary extends Component<
-  ErrorBoundaryProps,
-  ErrorBoundaryState
-> {
-  state: ErrorBoundaryState = { error: null };
+/**
+ * Section-level error boundary for client-rendered content. Its fallback is the
+ * shared `ErrorState`, so the raw error message is never printed. "Try again"
+ * clears the boundary and re-renders the children.
+ */
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null, hasError: false };
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
+  static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+    return { error, hasError: true };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error("CRM error boundary:", error, info.componentStack);
   }
 
   private handleRetry = () => {
-    this.setState({ error: null });
+    this.setState({ error: null, hasError: false });
   };
 
   render() {
-    if (this.state.error) {
+    if (this.state.hasError) {
       return (
-        <Card className="border-destructive/40">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangleIcon className="size-4 text-destructive" />
-              {this.props.title ?? "Something went wrong"}
-            </CardTitle>
-            <CardDescription>
-              {this.props.description ??
-                "An unexpected error occurred while rendering this section."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {this.state.error.message}
-            </p>
-            <Button size="sm" variant="outline" onClick={this.handleRetry}>
-              Try again
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title={this.props.title ?? "Something went wrong"}
+          description={this.props.description}
+          error={this.state.error}
+          onRetry={this.handleRetry}
+        />
       );
     }
 

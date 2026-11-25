@@ -30,13 +30,13 @@ type SourceEffectivenessCardProps = {
 
 export function SourceEffectivenessCard({ sources }: SourceEffectivenessCardProps) {
   const chartData = sources
-    .filter((s) => (s.applications ?? 0) > 0)
+    .filter((s) => s.applications > 0)
     .slice(0, 8)
     .map((s) => ({
-      source: s.provider_slug ?? s.provider_name ?? "unknown",
-      app_to_interview_pct: s.app_to_interview_pct ?? 0,
-      applications: s.applications ?? 0,
-      interviews: s.interviews ?? 0,
+      source: s.slug || s.name || "unknown",
+      app_to_interview_pct: s.appToInterview.value == null ? 0 : Math.round(s.appToInterview.value * 100),
+      applications: s.applications,
+      interviews: s.applicationsWithInterview,
     }));
 
   return (

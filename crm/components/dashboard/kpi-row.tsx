@@ -6,13 +6,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { DashboardKpis } from "@/lib/analytics";
-import type { WeeklyActivity } from "@/lib/analytics";
+import type { DashboardKpis, Rate, WeeklyActivityPoint } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 type KpiRowProps = {
   kpis: DashboardKpis;
-  weeklyActivity: WeeklyActivity[];
+  weeklyActivity: WeeklyActivityPoint[];
 };
 
 type KpiTile = {
@@ -25,6 +24,15 @@ type KpiTile = {
 
 function deltaLabel(current: number, previous: number) {
   return current - previous;
+}
+
+function percentOf(rate: Rate): number | null {
+  return rate.value == null ? null : Math.round(rate.value * 100);
+}
+
+function rateValue(rate: Rate): string {
+  const pct = percentOf(rate);
+  return pct == null ? "—" : `${pct}%`;
 }
 
 function DeltaBadge({ delta }: { delta: number }) {
@@ -72,15 +80,23 @@ function Sparkline({ values }: { values: number[] }) {
 }
 
 export function KpiRow({ kpis, weeklyActivity }: KpiRowProps) {
-  const appSpark = weeklyActivity.map((w) => w.applications ?? 0);
-  const oppSpark = weeklyActivity.map((w) => w.opportunities ?? 0);
-  const interviewSpark = weeklyActivity.map((w) => w.interviews ?? 0);
+  const appSpark = weeklyActivity.map((w) => w.applied);
+  const oppSpark = weeklyActivity.map((w) => w.opportunities);
+  const interviewSpark = weeklyActivity.map((w) => w.interviews);
+  const responseDelta =
+    percentOf(kpis.responseRate) != null && percentOf(kpis.responseRatePrev) != null
+      ? deltaLabel(percentOf(kpis.responseRate) ?? 0, percentOf(kpis.responseRatePrev) ?? 0)
+      : 0;
+  const avgScoreDelta =
+    kpis.avgScore != null && kpis.avgScorePrev != null
+      ? Math.round((kpis.avgScore - kpis.avgScorePrev) * 10) / 10
+      : 0;
 
   const tiles: KpiTile[] = [
     {
       title: "Open applications",
       value: kpis.openApplications,
-      delta: 0,
+      delta: deltaLabel(kpis.openApplications, kpis.openApplicationsPrev),
       hint: "Active pipeline",
     },
     {
@@ -91,8 +107,8 @@ export function KpiRow({ kpis, weeklyActivity }: KpiRowProps) {
     },
     {
       title: "Response rate",
-      value: `${kpis.responseRate}%`,
-      delta: deltaLabel(kpis.responseRate, kpis.responseRatePrev),
+      value: rateValue(kpis.responseRate),
+      delta: responseDelta,
       hint: "Apps with reply in range",
     },
     {
@@ -109,8 +125,8 @@ export function KpiRow({ kpis, weeklyActivity }: KpiRowProps) {
     },
     {
       title: "Avg evaluation score",
-      value: kpis.avgScore || "—",
-      delta: Math.round((kpis.avgScore - kpis.avgScorePrev) * 10) / 10,
+      value: kpis.avgScore ?? "—",
+      delta: avgScoreDelta,
     },
   ];
 

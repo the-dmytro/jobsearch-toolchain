@@ -16,17 +16,21 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { changeApplicationStage } from "@/lib/actions/applications";
-import { qk } from "@/lib/query-keys";
+import { invalidateAfterMutation } from "@/lib/mutations";
 import { CANONICAL_STAGES, normalizeStage } from "@/lib/stages";
 import type { ApplicationWithJoins } from "./use-applications-query";
+
+/** Board column for a stage. Withdrawn and ghosted applications sit in the closed column. */
+function columnFor(raw: string | null | undefined): string {
+  const stage = normalizeStage(raw);
+  return (CANONICAL_STAGES as readonly string[]).includes(stage) ? stage : "declined";
+}
 
 function groupByStage(apps: ApplicationWithJoins[]) {
   const map = new Map<string, ApplicationWithJoins[]>();
   for (const s of CANONICAL_STAGES) map.set(s, []);
   for (const a of apps) {
-    const col = normalizeStage(a.current_stage);
-    if (!map.has(col)) map.set(col, []);
-    map.get(col)!.push(a);
+    map.get(columnFor(a.current_stage))!.push(a);
   }
   return map;
 }
@@ -94,14 +98,10 @@ export function ApplicationsKanban({ data }: { data: ApplicationWithJoins[] }) {
   const mutation = useMutation({
     mutationFn: async (p: { applicationId: string; newStage: string }) => {
       const res = await changeApplicationStage(p);
-      if (res && "error" in res) {
-        const err = res.error;
-        throw new Error(typeof err === "string" ? err : JSON.stringify(err));
-      }
+      if (!res.ok) throw new Error(res.message);
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.applications });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: (_data, variables) => {
+      void invalidateAfterMutation(qc, { applicationId: variables.applicationId });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -116,7 +116,7 @@ export function ApplicationsKanban({ data }: { data: ApplicationWithJoins[] }) {
       targetStage = over.id as string;
     } else {
       const overApp = data.find((a) => a.id === over.id);
-      if (overApp) targetStage = normalizeStage(overApp.current_stage);
+      if (overApp) targetStage = columnFor(overApp.current_stage);
     }
     if (!targetStage) return;
 

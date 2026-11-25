@@ -15,7 +15,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import type { FunnelSummary } from "@/lib/analytics";
+import type { FunnelStep, FunnelSummary } from "@/lib/analytics";
 
 const chartConfig = {
   count: { label: "Count", color: "var(--chart-1)" },
@@ -25,30 +25,22 @@ type FunnelCardProps = {
   funnel: FunnelSummary | null;
 };
 
+const EMPTY_STEPS: FunnelStep[] = [
+  { key: "opportunities", label: "Opportunities", count: 0, conversion: null },
+  { key: "evaluated", label: "Evaluated", count: 0, conversion: { value: null, n: 0 } },
+  { key: "applied", label: "Applied", count: 0, conversion: { value: null, n: 0 } },
+  { key: "interviewing", label: "Interviewing", count: 0, conversion: { value: null, n: 0 } },
+  { key: "offers", label: "Offer", count: 0, conversion: { value: null, n: 0 } },
+];
+
 export function FunnelCard({ funnel }: FunnelCardProps) {
-  const data = [
-    { stage: "Opportunities", count: funnel?.opportunities_count ?? 0, conversion: null },
-    {
-      stage: "Evaluated",
-      count: funnel?.evaluated_count ?? 0,
-      conversion: funnel?.opp_to_eval_pct,
-    },
-    {
-      stage: "Applied",
-      count: funnel?.applied_count ?? 0,
-      conversion: funnel?.eval_to_applied_pct,
-    },
-    {
-      stage: "Interviewing",
-      count: funnel?.interviewing_count ?? 0,
-      conversion: funnel?.applied_to_interview_pct,
-    },
-    {
-      stage: "Offer",
-      count: funnel?.offer_count ?? 0,
-      conversion: funnel?.interview_to_offer_pct,
-    },
-  ];
+  const steps = funnel?.steps ?? EMPTY_STEPS;
+  const data = steps.map((step) => ({
+    stage: step.label,
+    count: step.count,
+    conversion:
+      step.conversion?.value == null ? null : Math.round(step.conversion.value * 100),
+  }));
 
   const colors = [
     "var(--chart-1)",

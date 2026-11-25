@@ -41,11 +41,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { createCommunication } from "@/lib/actions/communications";
 import { createContact } from "@/lib/actions/contacts";
 import { createInterview } from "@/lib/actions/interviews";
-import { qk } from "@/lib/query-keys";
 import { communicationInsertSchema } from "@/lib/schemas/communication";
 import { contactInsertSchema } from "@/lib/schemas/contact";
 import { interviewInsertSchema } from "@/lib/schemas/interview";
-import { normalizeStage, stageProgressPercent } from "@/lib/stages";
+import { invalidateAfterMutation } from "@/lib/mutations";
+import { isStageChangeEvent, normalizeStage, stageFromEvent, stageProgress } from "@/lib/stages";
 import { z } from "zod";
 
 function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
@@ -132,6 +132,10 @@ export function ApplicationDetail({ id }: { id: string }) {
   const title = app.opportunities?.title ?? "Application";
   const company = app.organizations?.name ?? "—";
   const stage = normalizeStage(app.current_stage);
+  const progress = stageProgress(
+    app.current_stage,
+    data.events.filter((e) => isStageChangeEvent(e.event_type)).map((e) => stageFromEvent(e))
+  );
 
   return (
     <div className="space-y-6">
@@ -159,10 +163,10 @@ export function ApplicationDetail({ id }: { id: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Stage progress</CardTitle>
-          <CardDescription>{stage.replace(/_/g, " ")}</CardDescription>
+          <CardDescription>{(progress.terminal ?? stage).replace(/_/g, " ")}</CardDescription>
         </CardHeader>
         <CardContent>
-          <Progress value={stageProgressPercent(app.current_stage)} />
+          <Progress value={progress.percent} />
         </CardContent>
       </Card>
 
@@ -461,11 +465,11 @@ function CommunicationQuickForm({
   const mutation = useMutation({
     mutationFn: async (v: FormValues) => {
       const res = await createCommunication(v);
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Logged");
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset({ ...form.getValues(), subject: "", summary: "" });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -551,11 +555,11 @@ function InterviewQuickForm({
         meeting_url: v.meeting_url || null,
         notes: v.notes || null,
       });
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Interview scheduled");
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -663,12 +667,11 @@ function ContactQuickForm({
         organization_id: organizationId,
         email: v.email === "" ? undefined : v.email,
       });
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Contact added");
-      void qc.invalidateQueries({ queryKey: qk.contacts });
-      void qc.invalidateQueries({ queryKey: qk.application(applicationId) });
+      void invalidateAfterMutation(qc, { applicationId });
       form.reset({
         organization_id: organizationId,
         full_name: "",

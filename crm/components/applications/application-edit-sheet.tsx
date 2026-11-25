@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { updateApplication } from "@/lib/actions/applications";
-import { qk } from "@/lib/query-keys";
+import { invalidateAfterMutation } from "@/lib/mutations";
 import { applicationUpdateSchema } from "@/lib/schemas/application";
 import { CANONICAL_STAGES } from "@/lib/stages";
 import type { Tables } from "@/types/database.types";
@@ -67,13 +67,11 @@ export function ApplicationEditSheet({
   const mutation = useMutation({
     mutationFn: async (values: FormValues) => {
       const res = await updateApplication(values);
-      if (res && "error" in res) throw new Error(JSON.stringify(res.error));
+      if (!res.ok) throw new Error(res.message);
     },
     onSuccess: () => {
       toast.success("Saved");
-      void qc.invalidateQueries({ queryKey: qk.application(application.id) });
-      void qc.invalidateQueries({ queryKey: qk.applications });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void invalidateAfterMutation(qc, { applicationId: application.id });
       onOpenChange(false);
     },
     onError: (e: Error) => toast.error(e.message),

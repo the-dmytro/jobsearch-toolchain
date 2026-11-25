@@ -8,11 +8,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { PipelineAging } from "@/lib/analytics";
-import { normalizeStage } from "@/lib/stages";
+import type { PipelineAgingRow } from "@/lib/analytics";
 
 type PipelineAgingCardProps = {
-  pipeline: PipelineAging[];
+  pipeline: PipelineAgingRow[];
 };
 
 export function PipelineAgingCard({ pipeline }: PipelineAgingCardProps) {
@@ -29,22 +28,20 @@ export function PipelineAgingCard({ pipeline }: PipelineAgingCardProps) {
           <p className="text-sm text-muted-foreground">No open applications</p>
         ) : (
           rows.map((row) => {
-            const stale = (row.days_in_stage ?? 0) >= 14;
+            const stale = row.daysInStage >= 14;
             return (
               <Link
-                key={row.application_id}
-                href={`/applications/${row.application_id}`}
+                key={row.applicationId}
+                href={`/applications/${row.applicationId}`}
                 className="flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
               >
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{row.opportunity_title}</p>
+                  <p className="truncate font-medium">{row.title}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {row.organization_name} · {normalizeStage(row.current_stage)}
+                    {row.company} · {row.stage}
                   </p>
                 </div>
-                <Badge variant={stale ? "destructive" : "secondary"}>
-                  {row.days_in_stage ?? 0}d
-                </Badge>
+                <Badge variant={stale ? "destructive" : "secondary"}>{row.daysInStage}d</Badge>
               </Link>
             );
           })

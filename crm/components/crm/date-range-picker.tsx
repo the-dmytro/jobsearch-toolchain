@@ -15,15 +15,21 @@ import {
   type DateRangePreset,
   useDateRange,
 } from "@/lib/date-range-context";
-import { cn } from "@/lib/utils";
 
-const PRESETS: { label: string; value: DateRangePreset }[] = [
-  { label: "7d", value: "7d" },
-  { label: "30d", value: "30d" },
-  { label: "90d", value: "90d" },
-  { label: "All", value: "all" },
+const PRESETS: { label: string; value: Exclude<DateRangePreset, "custom"> }[] = [
+  { label: "7 days", value: "7d" },
+  { label: "30 days", value: "30d" },
+  { label: "90 days", value: "90d" },
+  { label: "All time", value: "all" },
 ];
 
+/**
+ * Chooses the dashboard date range: quick presets plus a custom calendar.
+ *
+ * From 640px up, presets are a segmented button group. Below that they collapse
+ * into a select, so the control keeps every option at 375px. The custom range
+ * opens a calendar popover on every screen size.
+ */
 export function DateRangePicker() {
   const { value, setPreset, setCustomRange } = useDateRange();
 
@@ -31,35 +37,59 @@ export function DateRangePicker() {
     from: value.range.start,
     to: value.range.end,
   };
+  const rangeLabel = `${format(value.range.start, "MMM d")} – ${format(value.range.end, "MMM d, yyyy")}`;
 
   return (
     <div className="flex items-center gap-1">
-      <div className="hidden items-center rounded-md border p-0.5 sm:flex">
-        {PRESETS.map((preset) => (
-          <Button
-            key={preset.value}
-            variant={value.preset === preset.value ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setPreset(preset.value)}
-          >
-            {preset.label}
-          </Button>
-        ))}
+      <div
+        role="group"
+        aria-label="Quick date ranges"
+        className="hidden items-center rounded-md border p-0.5 sm:flex"
+      >
+        {PRESETS.map((preset) => {
+          const selected = value.preset === preset.value;
+          return (
+            <Button
+              key={preset.value}
+              type="button"
+              variant={selected ? "secondary" : "ghost"}
+              size="sm"
+              aria-pressed={selected}
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setPreset(preset.value)}
+            >
+              {preset.label}
+            </Button>
+          );
+        })}
       </div>
+      <select
+        aria-label="Quick date range"
+        value={value.preset}
+        onChange={(event) => {
+          const next = event.target.value as Exclude<DateRangePreset, "custom">;
+          setPreset(next);
+        }}
+        className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:hidden"
+      >
+        {value.preset === "custom" ? (
+          <option value="custom" disabled>
+            Custom range
+          </option>
+        ) : null}
+        {PRESETS.map((preset) => (
+          <option key={preset.value} value={preset.value}>
+            {preset.label}
+          </option>
+        ))}
+      </select>
       <Popover>
         <PopoverTrigger
           render={
-            <Button
-              variant="outline"
-              size="sm"
-              className={cn("h-8 justify-start gap-2 font-normal")}
-            >
-              <CalendarIcon className="size-3.5" />
-              <span className="hidden sm:inline">
-                {format(value.range.start, "MMM d")} – {format(value.range.end, "MMM d, yyyy")}
-              </span>
-              <span className="sm:hidden">{value.preset}</span>
+            <Button variant="outline" size="sm" className="h-8 justify-start gap-2 font-normal">
+              <CalendarIcon aria-hidden="true" className="size-3.5" />
+              <span className="hidden tabular-nums sm:inline">{rangeLabel}</span>
+              <span className="sr-only sm:hidden">Pick a custom date range</span>
             </Button>
           }
         />

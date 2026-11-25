@@ -11,33 +11,35 @@ import { VelocityCard } from "@/components/dashboard/velocity-card";
 import type {
   DashboardKpis,
   FunnelSummary,
-  PipelineAging,
+  PipelineAgingRow,
   SourceEffectiveness,
   UpcomingItem,
-  WeeklyActivity,
+  WeeklyActivityPoint,
 } from "@/lib/analytics";
 import type { Tables } from "@/types/database.types";
 
 const EMPTY_KPIS: DashboardKpis = {
   openApplications: 0,
+  openApplicationsPrev: 0,
   appliedInRange: 0,
   appliedPrevPeriod: 0,
-  responseRate: 0,
-  responseRatePrev: 0,
+  responseRate: { value: null, n: 0 },
+  responseRatePrev: { value: null, n: 0 },
   interviewsInRange: 0,
   interviewsPrev: 0,
   newOpportunities: 0,
   newOpportunitiesPrev: 0,
-  avgScore: 0,
-  avgScorePrev: 0,
+  avgScore: null,
+  avgScorePrev: null,
 };
 
 const KPIS: DashboardKpis = {
   openApplications: 12,
+  openApplicationsPrev: 12,
   appliedInRange: 9,
   appliedPrevPeriod: 4,
-  responseRate: 44,
-  responseRatePrev: 50,
+  responseRate: { value: 0.44, n: 9 },
+  responseRatePrev: { value: 0.5, n: 4 },
   interviewsInRange: 3,
   interviewsPrev: 3,
   newOpportunities: 17,
@@ -46,67 +48,61 @@ const KPIS: DashboardKpis = {
   avgScorePrev: 6.9,
 };
 
-const WEEKLY_ACTIVITY: WeeklyActivity[] = [
-  { week_start: "2024-06-03", opportunities: 8, applications: 4, interviews: 1 },
-  { week_start: "2024-06-10", opportunities: 5, applications: 3, interviews: 2 },
-  { week_start: "2024-06-17", opportunities: 4, applications: 2, interviews: 0 },
+const WEEKLY_ACTIVITY: WeeklyActivityPoint[] = [
+  { weekStart: "2024-06-03", opportunities: 8, applied: 4, responses: 2, interviews: 1 },
+  { weekStart: "2024-06-10", opportunities: 5, applied: 3, responses: 1, interviews: 2 },
+  { weekStart: "2024-06-17", opportunities: 4, applied: 2, responses: 0, interviews: 0 },
 ];
 
 const FUNNEL: FunnelSummary = {
-  opportunities_count: 40,
-  evaluated_count: 24,
-  applied_count: 12,
-  interviewing_count: 4,
-  offer_count: 1,
-  opp_to_eval_pct: 60,
-  eval_to_applied_pct: 50,
-  applied_to_interview_pct: 33,
-  interview_to_offer_pct: 25,
+  steps: [
+    { key: "opportunities", label: "Opportunities", count: 40, conversion: null },
+    { key: "evaluated", label: "Evaluated", count: 24, conversion: { value: 0.6, n: 40 } },
+    { key: "applied", label: "Applied", count: 12, conversion: { value: 0.5, n: 24 } },
+    { key: "interviewing", label: "Interviewing", count: 4, conversion: { value: 0.33, n: 12 } },
+    { key: "offers", label: "Offer", count: 1, conversion: { value: 0.25, n: 4 } },
+  ],
 };
 
 const SOURCES: SourceEffectiveness[] = [
   {
-    provider_id: "p1",
-    provider_slug: "ashby",
-    provider_name: "Ashby",
+    providerId: "p1",
+    slug: "ashby",
+    name: "Ashby",
     opportunities: 20,
     applications: 8,
-    interviews: 4,
+    applicationsWithInterview: 4,
     offers: 1,
-    app_to_interview_pct: 50,
+    appToInterview: { value: 0.5, n: 8 },
   },
   {
-    provider_id: "p2",
-    provider_slug: "lever",
-    provider_name: "Lever",
+    providerId: "p2",
+    slug: "lever",
+    name: "Lever",
     opportunities: 12,
     applications: 0,
-    interviews: 0,
+    applicationsWithInterview: 0,
     offers: 0,
-    app_to_interview_pct: 0,
+    appToInterview: { value: null, n: 0 },
   },
 ];
 
-const PIPELINE: PipelineAging[] = [
+const PIPELINE: PipelineAgingRow[] = [
   {
-    application_id: "app-1",
-    organization_name: "Globex",
-    opportunity_title: "Staff Engineer",
-    current_stage: "phone",
-    status: "active",
-    days_in_stage: 21,
-    applied_at: "2024-06-01T09:00:00.000Z",
-    updated_at: "2024-06-02T09:00:00.000Z",
+    applicationId: "app-1",
+    company: "Globex",
+    title: "Staff Engineer",
+    stage: "screening",
+    daysInStage: 21,
+    appliedAt: "2024-06-01T09:00:00.000Z",
   },
   {
-    application_id: "app-2",
-    organization_name: "Initech",
-    opportunity_title: "Platform Lead",
-    current_stage: "final",
-    status: "active",
-    days_in_stage: 3,
-    applied_at: "2024-06-18T09:00:00.000Z",
-    updated_at: "2024-06-19T09:00:00.000Z",
+    applicationId: "app-2",
+    company: "Initech",
+    title: "Platform Lead",
+    stage: "onsite",
+    daysInStage: 3,
+    appliedAt: "2024-06-18T09:00:00.000Z",
   },
 ];
 
@@ -200,8 +196,9 @@ describe("KpiRow", () => {
     render(<KpiRow kpis={EMPTY_KPIS} weeklyActivity={[]} />);
 
     expect(screen.getByText("Open applications")).toBeInTheDocument();
-    expect(screen.getByText("0%")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    // Response rate and average score have no sample, so both show a dash.
+    expect(screen.getAllByText("—")).toHaveLength(2);
     expect(screen.getAllByText("No change")).toHaveLength(6);
   });
 
@@ -213,7 +210,7 @@ describe("KpiRow", () => {
     expect(screen.getByText("7.4")).toBeInTheDocument();
     expect(screen.getByText("+5")).toBeInTheDocument();
     expect(screen.getByText("-6")).toBeInTheDocument();
-    // "Open applications" has no comparison period, "Interviews" is flat.
+    // "Open applications" and "Interviews" are flat against the previous period.
     expect(screen.getAllByText("No change")).toHaveLength(2);
   });
 });
