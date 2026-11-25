@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getArtifactSignedUrl } from "@/lib/actions/artifacts";
+import { safeExternalUrl } from "@/lib/safe-url";
 import type { Tables } from "@/types/database.types";
 
 export function ArtifactOpenButton({ artifact }: { artifact: Tables<"artifacts"> }) {
@@ -16,15 +17,18 @@ export function ArtifactOpenButton({ artifact }: { artifact: Tables<"artifacts">
       return;
     }
     setLoading(true);
-    const res = await getArtifactSignedUrl(path, artifact.storage_bucket ?? undefined);
+    const res = await getArtifactSignedUrl(path);
     setLoading(false);
-    if ("error" in res && res.error) {
-      toast.error(res.error);
+    if (!res.ok) {
+      toast.error(res.message);
       return;
     }
-    if ("url" in res && res.url) {
-      window.open(res.url, "_blank", "noopener,noreferrer");
+    const href = safeExternalUrl(res.url);
+    if (!href) {
+      toast.error("Could not open the file. Try again.");
+      return;
     }
+    window.open(href, "_blank", "noopener,noreferrer");
   }
 
   return (

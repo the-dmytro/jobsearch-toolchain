@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,3 +45,42 @@ class PublicSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DenylistSourceTests(unittest.TestCase):
+    def test_denylist_file_is_preferred_over_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "denylist.txt"
+            path.write_text("# comment\nalpha-token\n\n", encoding="utf-8")
+
+            patterns = scan_pii.load_patterns(path, {"PII_DENYLIST": "from-env"})
+
+        self.assertEqual(patterns, ["alpha-token"])
+
+    def test_environment_denylist_is_used_when_file_is_missing(self) -> None:
+        missing = Path("does-not-exist-denylist.txt")
+
+        patterns = scan_pii.load_patterns(missing, {"PII_DENYLIST": "first\n\nsecond\n"})
+
+        self.assertEqual(patterns, ["first", "second"])
+
+    def test_no_denylist_source_returns_none(self) -> None:
+        missing = Path("does-not-exist-denylist.txt")
+
+        self.assertIsNone(scan_pii.load_patterns(missing, {}))
+        self.assertIsNone(scan_pii.load_patterns(missing, {"PII_DENYLIST": "   "}))
+
+    def test_generic_mode_runs_only_secret_and_conflict_checks(self) -> None:
+        text = "<<<<<<< HEAD\nkey -----BEGIN PRIVATE KEY----- person@personal-mail.dev /Users/person\n"
+
+        hits = scan_pii.scan_content(text, "notes.md", None)
+
+        self.assertTrue(any("conflict marker" in hit for hit in hits))
+        self.assertTrue(any("secret-like material" in hit for hit in hits))
+        self.assertFalse(any("email address" in hit for hit in hits))
+        self.assertFalse(any("home path" in hit for hit in hits))
+
+    def test_configured_denylist_matches_literal_patterns(self) -> None:
+        hits = scan_pii.scan_content("contains alpha-token here", "notes.md", ["alpha-token"])
+
+        self.assertTrue(any("deny-list pattern" in hit for hit in hits))

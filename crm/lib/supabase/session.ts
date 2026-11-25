@@ -1,13 +1,22 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAllowedOwnerEmail } from "@/lib/env";
+import { getPublicEnv, isAllowedOwnerEmail } from "@/lib/env";
 
-export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+/**
+ * Refreshes the Supabase session cookies and enforces the owner allowlist.
+ * `requestHeaders` lets the proxy forward extra request headers (for example the
+ * CSP nonce) to the rendered page; they are carried on every response.
+ */
+export async function updateSession(
+  request: NextRequest,
+  requestHeaders: Headers = new Headers(request.headers)
+) {
+  let supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } });
+  const env = getPublicEnv();
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
         getAll() {
@@ -17,7 +26,18 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          supabaseResponse = NextResponse.next({ request });
+          // Keep the forwarded Cookie header in step with the refreshed cookies.
+          // Raw values (not RequestCookies#toString, which percent-encodes).
+          requestHeaders.set(
+            "cookie",
+            request.cookies
+              .getAll()
+              .map(({ name, value }) => `${name}=${value}`)
+              .join("; ")
+          );
+          supabaseResponse = NextResponse.next({
+            request: { headers: requestHeaders },
+          });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           );

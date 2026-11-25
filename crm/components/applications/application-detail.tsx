@@ -1,5 +1,6 @@
 "use client";
 
+import { SafeExternalLink } from "@/components/crm/safe-external-link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -321,14 +322,12 @@ export function ApplicationDetail({ id }: { id: string }) {
               <CardContent className="space-y-2 text-sm">
                 <p>{app.opportunities.title}</p>
                 {app.opportunities.source_url ? (
-                  <a
+                  <SafeExternalLink
                     href={app.opportunities.source_url}
-                    target="_blank"
-                    rel="noreferrer"
                     className="text-primary underline"
                   >
                     Source URL
-                  </a>
+                  </SafeExternalLink>
                 ) : null}
               </CardContent>
             </Card>
@@ -364,9 +363,9 @@ export function ApplicationDetail({ id }: { id: string }) {
                   <div key={s.id} className="text-sm border-b pb-2">
                     <p className="font-medium">{s.title ?? s.source_type}</p>
                     {s.source_url ? (
-                      <a href={s.source_url} className="text-primary underline" target="_blank" rel="noreferrer">
+                      <SafeExternalLink href={s.source_url} className="text-primary underline">
                         Link
-                      </a>
+                      </SafeExternalLink>
                     ) : null}
                   </div>
                 ))

@@ -1,5 +1,6 @@
 "use client";
 
+import { SafeExternalLink } from "@/components/crm/safe-external-link";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -61,14 +62,12 @@ export function OpportunityDetail({ id }: { id: string }) {
           {org?.name ?? "—"} · {String(o.opportunity_type ?? "")}
         </p>
         {o.source_url ? (
-          <a
+          <SafeExternalLink
             href={String(o.source_url)}
-            target="_blank"
-            rel="noreferrer"
             className="text-sm text-primary underline"
           >
             Source
-          </a>
+          </SafeExternalLink>
         ) : null}
       </div>
 

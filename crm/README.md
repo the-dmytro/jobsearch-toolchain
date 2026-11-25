@@ -37,7 +37,7 @@ The publishable Supabase key is public in the browser bundle by design. Protecti
 
 - Migration `005_crm_allowlist_rls.sql` enables RLS on `crm_owner_allowlist` and revokes API access — the owner gate cannot be rewritten via REST.
 - Domain tables stay behind `crm_is_owner()` policies for `authenticated` only.
-- `CRM_OWNER_EMAIL` middleware is UI defense-in-depth only; RLS is the real control.
+- The `CRM_OWNER_EMAIL` check in `crm/proxy.ts` is UI defense-in-depth only; RLS is the real control.
 - Keep `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` server-only (never `NEXT_PUBLIC_`).
 
 To add another owner: insert into `crm_owner_allowlist` with service role or `jobtracker` direct DB access, and add the email to `CRM_OWNER_EMAIL`.
