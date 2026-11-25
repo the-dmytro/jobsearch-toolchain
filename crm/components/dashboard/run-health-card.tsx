@@ -4,27 +4,32 @@ import Link from "next/link";
 
 import { DashboardCard, type CardStatus } from "@/components/dashboard/dashboard-card";
 import { Badge } from "@/components/ui/badge";
-import { formatNumber, formatPercent, formatRelative } from "@/lib/format";
+import type { RunError } from "@/lib/analytics";
+import { formatNumber, formatRelative } from "@/lib/format";
 import type { Tables } from "@/types/database.types";
 
 type RunHealthCardProps = {
+  /** The most recent runs, newest first by runTime. */
   runs?: Tables<"automation_runs">[];
-  runEvents?: Tables<"automation_run_events">[];
+  /** The latest failed run, or null. */
+  lastFailure?: RunError | null;
   status: CardStatus;
 };
 
-/** Compact summary: the latest run, the success rate across recent runs, and the last error. */
-export function RunHealthCard({ runs, runEvents, status }: RunHealthCardProps) {
+function isFailed(run: Tables<"automation_runs">): boolean {
+  return run.status.trim().toLowerCase() === "failed";
+}
+
+/** Compact summary: the latest run, how many recent runs finished without errors, and the last failure. */
+export function RunHealthCard({ runs, lastFailure, status }: RunHealthCardProps) {
   const recentRuns = runs ?? [];
   const latest = recentRuns[0];
-  const completed = recentRuns.filter((run) => run.status === "completed").length;
-  const successRate = recentRuns.length > 0 ? completed / recentRuns.length : null;
-  const lastError = (runEvents ?? []).find((event) => event.severity === "error");
+  const finishedWithoutErrors = recentRuns.filter((run) => !isFailed(run)).length;
 
   return (
     <DashboardCard
       title="Run health"
-      description="Latest automation run, success rate across the most recent runs, and the last error."
+      description="Latest automation run, how many recent runs finished without errors, and the last failed run."
       status={status}
       isEmpty={recentRuns.length === 0}
       emptyTitle="No automation runs yet"
@@ -42,9 +47,7 @@ export function RunHealthCard({ runs, runEvents, status }: RunHealthCardProps) {
                 >
                   {latest.run_key ?? latest.id.slice(0, 8)}
                 </Link>
-                <Badge variant={latest.status === "completed" ? "secondary" : "destructive"}>
-                  {latest.status}
-                </Badge>
+                <Badge variant={isFailed(latest) ? "destructive" : "secondary"}>{latest.status}</Badge>
               </>
             ) : (
               <span className="text-muted-foreground">None</span>
@@ -53,27 +56,32 @@ export function RunHealthCard({ runs, runEvents, status }: RunHealthCardProps) {
         </div>
 
         <div className="min-w-0 space-y-1">
-          <dt className="text-xs font-medium text-muted-foreground">Success rate</dt>
+          <dt className="text-xs font-medium text-muted-foreground">Finished without errors</dt>
           <dd className="font-semibold tabular-nums">
-            {successRate == null ? "—" : formatPercent(successRate)}
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              of {formatNumber(recentRuns.length)} recent runs
-            </span>
+            {recentRuns.length === 0
+              ? "—"
+              : `${formatNumber(finishedWithoutErrors)} of ${formatNumber(recentRuns.length)}`}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">recent runs</span>
           </dd>
         </div>
 
         <div className="min-w-0 space-y-1">
           <dt className="text-xs font-medium text-muted-foreground">Last error</dt>
           <dd className="min-w-0">
-            {lastError ? (
+            {lastFailure ? (
               <p className="text-sm">
-                <span className="line-clamp-2">{lastError.message ?? lastError.event_type}</span>
+                <Link
+                  href={`/runs/${lastFailure.runId}`}
+                  className="line-clamp-2 underline-offset-4 hover:underline"
+                >
+                  {lastFailure.summary?.trim() || `${lastFailure.provider} failed without a message`}
+                </Link>
                 <span className="block text-xs text-muted-foreground">
-                  {formatRelative(lastError.created_at)}
+                  {lastFailure.at ? formatRelative(lastFailure.at) : "Time not recorded"}
                 </span>
               </p>
             ) : (
-              <span className="text-muted-foreground">No recent errors</span>
+              <span className="text-muted-foreground">No failed runs</span>
             )}
           </dd>
         </div>

@@ -10,6 +10,7 @@ import { SafeExternalLink } from "@/components/crm/safe-external-link";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate, formatNumber } from "@/lib/format";
+import { normalizeScore } from "@/lib/score";
 import { qk } from "@/lib/query-keys";
 import { createClient } from "@/lib/supabase/client";
 import { applicationOutcome, normalizeStage } from "@/lib/stages";
@@ -147,7 +148,8 @@ export function OpportunityDetail({ id }: { id: string }) {
           ) : (
             evaluations.map((ev) => (
               <p key={ev.id}>
-                Score {ev.score === null ? "—" : formatNumber(ev.score)} · evaluated {formatDate(ev.evaluated_at)}
+                Score {normalizeScore(ev.score) === null ? "—" : formatNumber(normalizeScore(ev.score))} · evaluated{" "}
+                {formatDate(ev.evaluated_at)}
               </p>
             ))
           )}

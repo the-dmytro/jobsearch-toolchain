@@ -18,6 +18,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { isDemoMode } from "@/lib/demo";
+import { routeUsesDateRange } from "@/lib/date-range-routes";
 import { Badge } from "@/components/ui/badge";
 
 const LABELS: Record<string, string> = {
@@ -57,6 +58,7 @@ function breadcrumbSegments(pathname: string) {
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const segments = breadcrumbSegments(pathname);
+  const showDateRange = routeUsesDateRange(pathname);
 
   return (
     <>
@@ -98,11 +100,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               Demo mode
             </Badge>
           ) : null}
-          <DateRangePicker />
+          {showDateRange ? <DateRangePicker /> : null}
           <ThemeToggle />
         </div>
       </header>
-      <div className="flex min-w-0 flex-1 flex-col p-4 md:p-6">{children}</div>
+      {/* overflow-x-clip: a child that is wider than the page clips here instead of widening the document. Wide tables and the stage board scroll in their own containers. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-clip p-4 md:p-6">{children}</div>
     </>
   );
 }

@@ -5,7 +5,8 @@ import { ErrorState } from "@/components/crm/error-state";
 import { PageHeader } from "@/components/crm/page-header";
 import { SafeExternalLink } from "@/components/crm/safe-external-link";
 import { TableSkeleton } from "@/components/crm/table-skeleton";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatNumber } from "@/lib/format";
+import { normalizeScore } from "@/lib/score";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -89,7 +90,7 @@ function Timeline({ bundle }: { bundle: ApplicationDetailBundle }) {
     for (const ev of bundle.evaluations) {
       rows.push({
         at: ev.evaluated_at,
-        label: `Evaluation${ev.score != null ? ` (${ev.score})` : ""}`,
+        label: `Evaluation${normalizeScore(ev.score) !== null ? ` (${formatNumber(normalizeScore(ev.score))})` : ""}`,
         sub: ev.main_match ?? undefined,
       });
     }
@@ -371,7 +372,8 @@ export function ApplicationDetail({ id }: { id: string }) {
                 data.evaluations.map((ev) => (
                   <div key={ev.id} className="rounded-md border p-3 text-sm">
                     <p className="font-medium">
-                      Score {ev.score ?? "—"} · {ev.recommendation ?? ev.verdict ?? "—"}
+                      Score {normalizeScore(ev.score) === null ? "—" : formatNumber(normalizeScore(ev.score))} ·{" "}
+                      {ev.recommendation ?? ev.verdict ?? "—"}
                     </p>
                     <p className="text-muted-foreground">{ev.main_match}</p>
                   </div>

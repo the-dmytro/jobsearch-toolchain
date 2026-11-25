@@ -61,7 +61,7 @@ export function DashboardPage() {
       />
 
       <ErrorBoundary title="Dashboard failed to render">
-        <div className="grid min-w-0 gap-4">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           <AttentionCard attention={data?.attention} status={status} />
 
           <KpiRow
@@ -71,17 +71,21 @@ export function DashboardPage() {
             showDeltas={hasPreviousPeriod(dateRange)}
           />
 
-          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
             <FunnelCard funnel={data?.funnel} status={status} />
             <WeeklyActivityCard weeklyActivity={data?.weeklyActivity} status={status} />
           </div>
 
-          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
             <SourceEffectivenessCard sources={data?.sourceEffectiveness} status={status} />
-            <PipelineAgingCard pipeline={data?.pipelineAging} status={status} />
+            <PipelineAgingCard
+              pipeline={data?.pipelineAging}
+              openCount={data?.kpis.openApplications}
+              status={status}
+            />
           </div>
 
-          <RunHealthCard runs={data?.runs} runEvents={data?.runEvents} status={status} />
+          <RunHealthCard runs={data?.runs} lastFailure={data?.lastFailure} status={status} />
         </div>
       </ErrorBoundary>
     </div>

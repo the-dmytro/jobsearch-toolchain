@@ -56,6 +56,20 @@ describe("proxy", () => {
     expect(mocks.getUser).not.toHaveBeenCalled();
   });
 
+  it("allows the Vercel preview toolbar only on preview deployments", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    vi.stubEnv("VERCEL_ENV", "production");
+    const production = await proxy(request("/applications"));
+    expect(production.headers.get("content-security-policy")).not.toContain("vercel.live");
+
+    vi.stubEnv("VERCEL_ENV", "preview");
+    const preview = await proxy(request("/applications"));
+    expect(preview.headers.get("content-security-policy")).toContain("frame-src 'self' https://vercel.live");
+    vi.unstubAllEnvs();
+  });
+
   it("names the missing variable only in the server log, not in the response", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

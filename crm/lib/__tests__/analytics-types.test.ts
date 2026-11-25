@@ -281,14 +281,12 @@ function dashboardInput(overrides: Partial<DashboardInput> = {}): DashboardInput
       { id: "prov-1", name: "Ashby", slug: "ashby" },
       { id: "prov-2", name: "Lever", slug: "lever" },
     ],
-    recentRuns: [run({ id: "run-1", status: "completed" })],
-    recentRunEvents: [],
-    failedRuns: [
+    runs: [
+      run({ id: "run-1", status: "completed", started_at: "2024-06-20T10:00:00.000Z" }),
       run({ id: "run-f1", status: "failed", provider_id: "prov-1", started_at: "2024-06-19T12:00:00.000Z", summary: "feed returned 500" }),
       run({ id: "run-f2", status: "failed", started_at: "2024-06-01T12:00:00.000Z" }),
       run({ id: "run-f3", status: "Partial", provider_id: "prov-2", started_at: "2024-06-18T12:00:00.000Z", summary: "two of three feeds" }),
     ],
-    runCount: 7,
     ...overrides,
   };
 }
@@ -385,7 +383,7 @@ describe("computeDashboardBundle open applications over time", () => {
     opportunities: [],
     evaluations: [],
     communications: [],
-    runCount: 0,
+    runs: [],
   });
 
   /** Open applications at the end of May `day`, read from the previous period of a 30-day range. */
@@ -647,23 +645,15 @@ describe("computeDashboardBundle needs-attention data", () => {
     expect(stalled[1]).toMatchObject({ company: "Hooli", title: "Untitled role", stage: "offer" });
   });
 
-  it("lists failed and partial runs from the last seven days, failed first by time, with severity", () => {
+  it("lists only failed runs from the last seven days, and no partial runs", () => {
     const { runErrors } = dashboard().attention;
 
     expect(runErrors).toEqual([
       {
         runId: "run-f1",
-        startedAt: "2024-06-19T12:00:00.000Z",
+        at: "2024-06-19T12:00:00.000Z",
         provider: "Ashby",
         summary: "feed returned 500",
-        severity: "failed",
-      },
-      {
-        runId: "run-f3",
-        startedAt: "2024-06-18T12:00:00.000Z",
-        provider: "Lever",
-        summary: "two of three feeds",
-        severity: "partial",
       },
     ]);
   });
@@ -682,8 +672,106 @@ describe("computeDashboardBundle needs-attention data", () => {
       interviews: 5,
       evaluations: 3,
       communications: 1,
-      automationRuns: 7,
+      automationRuns: 4,
     });
+  });
+});
+
+describe("computeDashboardBundle automation run health", () => {
+  it("orders runs by when they ran, not by when their row was written, untimed runs last", () => {
+    const bundle = dashboard(
+      dashboardInput({
+        runs: [
+          run({ id: "run-key-stamp", run_key: "linkedin-mail-fetch-20240601120000", created_at: "2024-11-23T10:00:00.000Z" }),
+          run({ id: "run-started", started_at: "2024-06-20T09:00:00.000Z", created_at: "2024-01-01T00:00:00.000Z" }),
+          run({ id: "run-date-key", run_key: "djinni-data-ml-ai-jobboards-2024-06-15", created_at: "2024-11-23T10:00:00.000Z" }),
+          run({ id: "run-untimed", created_at: "2024-12-01T00:00:00.000Z" }),
+        ],
+      })
+    );
+
+    expect(bundle.runs.map((row) => row.id)).toEqual(["run-started", "run-date-key", "run-key-stamp", "run-untimed"]);
+  });
+
+  it("reports the latest failed run by runTime as the last failure", () => {
+    const bundle = dashboard(
+      dashboardInput({
+        runs: [
+          run({ id: "failed-written-late", status: "failed", run_key: "upwork-mail-fetch-202406100900", created_at: "2024-11-23T10:00:00.000Z" }),
+          run({ id: "failed-started", status: "failed", started_at: "2024-06-18T08:00:00.000Z", provider_id: "prov-2" }),
+          run({ id: "partial-later", status: "partial", started_at: "2024-06-19T08:00:00.000Z" }),
+        ],
+      })
+    );
+
+    expect(bundle.lastFailure).toEqual({
+      runId: "failed-started",
+      at: "2024-06-18T08:00:00.000Z",
+      provider: "Lever",
+      summary: null,
+    });
+    expect(dashboard(dashboardInput({ runs: [run({ id: "ok", started_at: "2024-06-18T08:00:00.000Z" })] })).lastFailure).toBeNull();
+  });
+
+  it("keeps a failed run with no recorded time as the last failure, with no time", () => {
+    const { lastFailure } = dashboard(
+      dashboardInput({ runs: [run({ id: "failed-untimed", status: "failed", created_at: "2024-06-19T10:00:00.000Z" })] })
+    );
+
+    expect(lastFailure).toMatchObject({ runId: "failed-untimed", at: null });
+  });
+
+  it("leaves failed runs with no recorded time out of the attention list", () => {
+    const { runErrors } = dashboard(
+      dashboardInput({
+        runs: [
+          run({ id: "failed-untimed", status: "failed", created_at: "2024-06-19T10:00:00.000Z" }),
+          run({ id: "failed-recent", status: "failed", run_key: "linkedin-2024-06-19" }),
+          run({ id: "partial-recent", status: "partial", started_at: "2024-06-19T10:00:00.000Z" }),
+          run({ id: "failed-old", status: "failed", started_at: "2024-06-01T10:00:00.000Z" }),
+        ],
+      })
+    ).attention;
+
+    expect(runErrors.map((row) => row.runId)).toEqual(["failed-recent"]);
+    expect(runErrors[0].at).toBe("2024-06-19T00:00:00.000Z");
+  });
+});
+
+describe("computeDashboardBundle match scores", () => {
+  it("averages scores on the 0 to 10 scale, dividing 0 to 100 values by ten", () => {
+    const bundle = dashboard(
+      dashboardInput({
+        evaluations: [
+          { id: "e-hundred", opportunity_id: "opp-1", score: 85, evaluated_at: "2024-06-05T12:00:00.000Z" },
+          { id: "e-ten", opportunity_id: "opp-2", score: 7, evaluated_at: "2024-06-06T12:00:00.000Z" },
+        ],
+      })
+    );
+
+    expect(bundle.kpis.avgScore).toBe(7.8);
+  });
+
+  it("never shows an average above ten", () => {
+    const bundle = dashboard(
+      dashboardInput({
+        evaluations: [{ id: "e-max", opportunity_id: "opp-1", score: 100, evaluated_at: "2024-06-05T12:00:00.000Z" }],
+      })
+    );
+
+    expect(bundle.kpis.avgScore).toBe(10);
+  });
+
+  it("buckets 0 to 100 scores with the 0 to 10 scores", () => {
+    const { scoreOutcomes } = computeInsightsBundle(
+      insightsInput({
+        evaluations: [{ id: "e-hundred", opportunity_id: "opp-9", score: 95, evaluated_at: "2024-06-05T12:00:00.000Z" }],
+      }),
+      RANGE,
+      NOW
+    );
+
+    expect(scoreOutcomes).toEqual([expect.objectContaining({ bucket: "9-10", evaluations: 1, avgScore: 9.5 })]);
   });
 });
 
@@ -956,7 +1044,7 @@ function allTables(overrides: Record<string, TableFixture> = {}): Record<string,
     communications: input.communications as unknown as Row[],
     organizations: input.organizations as unknown as Row[],
     providers: input.providers as unknown as Row[],
-    automation_runs: [...input.recentRuns, ...input.failedRuns] as unknown as Row[],
+    automation_runs: input.runs as unknown as Row[],
     automation_run_events: [],
     ...overrides,
   };

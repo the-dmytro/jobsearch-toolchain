@@ -74,6 +74,37 @@ describe("buildContentSecurityPolicy", () => {
     );
   });
 
+  it("leaves the policy exactly as it was when the Vercel preview toolbar is off", () => {
+    const withoutOption = base();
+    expect(base({ vercelPreviewToolbar: false })).toBe(withoutOption);
+    expect(withoutOption).not.toContain("vercel.live");
+    expect(withoutOption).not.toContain("frame-src");
+    expect(withoutOption).not.toContain("pusher.com");
+  });
+
+  it("allows the Vercel preview toolbar to load, frame and connect when enabled", () => {
+    const csp = base({ vercelPreviewToolbar: true });
+    expect(directive(csp, "script-src")).toBe(
+      "script-src 'self' 'nonce-abc123' 'strict-dynamic' https://vercel.live"
+    );
+    expect(directive(csp, "frame-src")).toBe("frame-src 'self' https://vercel.live");
+    expect(directive(csp, "connect-src")).toBe(
+      `connect-src 'self' ${SUPABASE} wss://abcd.supabase.co https://vercel.live wss://ws-us3.pusher.com`
+    );
+    expect(directive(csp, "img-src")).toBe(
+      `img-src 'self' data: blob: ${SUPABASE} https://vercel.live https://vercel.com`
+    );
+  });
+
+  it("keeps the toolbar allowances out of the development and hardening directives", () => {
+    const csp = base({ vercelPreviewToolbar: true, development: true, upgradeInsecureRequests: true });
+    expect(directive(csp, "script-src")).toContain("'unsafe-eval'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("upgrade-insecure-requests");
+    expect(csp).not.toMatch(/[\r\n]/);
+  });
+
   it("includes the hardening directives and is a single line", () => {
     const csp = base({ upgradeInsecureRequests: true });
     expect(csp).toContain("default-src 'self'");

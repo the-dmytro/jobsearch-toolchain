@@ -19,7 +19,7 @@ import {
   type ActivityCommunicationRow,
   type ActivityEventRow,
 } from "@/lib/activity";
-import { fetchAll, queryError, type KeysetRow, type PageError } from "@/lib/fetch-all";
+import { fetchAll, type KeysetRow } from "@/lib/fetch-all";
 import {
   PIPELINE_STAGES,
   bestOutcome,
@@ -34,6 +34,8 @@ import {
   type StageOutcome,
 } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/client";
+import { compareRunsNewestFirst, runTime } from "@/lib/run-time";
+import { normalizeScore } from "@/lib/score";
 import type { Tables } from "@/types/database.types";
 
 /* ------------------------------------------------------------------ */
@@ -160,18 +162,19 @@ export type StalledApplication = {
   daysSinceActivity: number;
 };
 
+/** A failed automation run. */
 export type RunError = {
   runId: string;
-  startedAt: string;
+  /** When the run happened (ISO), or null when no time is recorded for it. */
+  at: string | null;
   provider: string;
   summary: string | null;
-  /** `failed` is an error; `partial` is a warning that some work was not completed. */
-  severity: "failed" | "partial";
 };
 
 export type AttentionBundle = {
   upcomingInterviews: AttentionInterview[];
   stalled: StalledApplication[];
+  /** Failed runs in the attention window, newest first. Partial runs are not issues. */
   runErrors: RunError[];
 };
 
@@ -193,8 +196,10 @@ export type DashboardBundle = {
   upcoming: UpcomingItem[];
   attention: AttentionBundle;
   totals: DataTotals;
+  /** The most recent runs by runTime, newest first. */
   runs: Tables<"automation_runs">[];
-  runEvents: Tables<"automation_run_events">[];
+  /** The latest failed run by runTime, or null when none is recorded. */
+  lastFailure: RunError | null;
 };
 
 export type ScoreBucket = "0-2" | "3-4" | "5-6" | "7-8" | "9-10" | "unknown";
@@ -330,13 +335,8 @@ export type RawAnalytics = {
   communications: CommunicationRow[];
   organizations: OrganizationRow[];
   providers: ProviderRow[];
-  /** Latest automation runs, for the run health card. */
-  recentRuns: Tables<"automation_runs">[];
-  recentRunEvents: Tables<"automation_run_events">[];
-  /** Failed and partial runs from the last seven days. */
-  failedRuns: Tables<"automation_runs">[];
-  /** Every automation run, counted by the server. */
-  runCount: number;
+  /** Every automation run. The table is small, so runs are ordered and filtered in memory by runTime. */
+  runs: Tables<"automation_runs">[];
 };
 
 export type DashboardInput = RawAnalytics;
@@ -352,6 +352,7 @@ export type InsightsInput = Pick<
 
 const ATTENTION_WINDOW_DAYS = 7;
 const PIPELINE_AGING_LIMIT = 25;
+const RECENT_RUN_LIMIT = 10;
 const UPCOMING_LIMIT = 12;
 const DECLINE_REASON_LIMIT = 8;
 /** Furthest pipeline stage that counts as having reached each funnel step. */
@@ -364,7 +365,6 @@ const FUNNEL_STEPS: ReadonlyArray<{ key: FunnelStepKey; label: string; minIndex:
 ];
 const OFFER_INDEX = 4;
 const FAILED_RUN_STATUS = "failed";
-const PARTIAL_RUN_STATUS = "partial";
 
 export const OUTCOME_LABELS: Readonly<Record<StageOutcome, string>> = {
   offer: "Offer",
@@ -440,8 +440,8 @@ function groupBy<T>(rows: readonly T[], key: (row: T) => string | null | undefin
 }
 
 function scoreBucket(score: number | null): ScoreBucket {
-  if (score == null || Number.isNaN(Number(score))) return "unknown";
-  const value = Number(score);
+  const value = normalizeScore(score);
+  if (value === null) return "unknown";
   if (value < 3) return "0-2";
   if (value < 5) return "3-4";
   if (value < 7) return "5-6";
@@ -652,12 +652,11 @@ export function computeDashboardBundle(
   const oppTimes = input.opportunities.map((o) => ({ row: o, time: timeOf(o.created_at) }));
   const oppsIn = (bounds: DateBounds) => oppTimes.filter((x) => inBounds(x.time, bounds));
 
-  const scoredIn = (bounds: DateBounds) =>
+  const scoredIn = (bounds: DateBounds): number[] =>
     input.evaluations
       .filter((e) => inBounds(timeOf(e.evaluated_at), bounds))
-      .map((e) => e.score)
-      .filter((s): s is number => s != null && !Number.isNaN(Number(s)))
-      .map(Number);
+      .map((e) => normalizeScore(e.score))
+      .filter((s): s is number => s !== null);
 
   const appsIn = (bounds: DateBounds) => facts.filter((f) => inBounds(f.appliedAt, bounds));
   const responseRateFor = (list: AppFact[]) =>
@@ -751,22 +750,25 @@ export function computeDashboardBundle(
       daysSinceActivity: f.daysSinceActivity,
     }));
 
-  const runTime = (run: Tables<"automation_runs">) => timeOf(run.started_at) ?? timeOf(run.created_at);
-  const runErrors: RunError[] = input.failedRuns
-    .map((run) => ({ run, status: run.status.trim().toLowerCase() }))
-    .filter(({ status }) => status === FAILED_RUN_STATUS || status === PARTIAL_RUN_STATUS)
-    .filter(({ run }) => {
+  /* Automation runs, newest first by when they ran. Runs with no recorded time sort last. */
+  const runsNewestFirst = [...input.runs].sort(compareRunsNewestFirst);
+  const failedRuns = runsNewestFirst.filter((run) => isFailedRun(run));
+  const toRunError = (run: Tables<"automation_runs">): RunError => {
+    const time = runTime(run);
+    return {
+      runId: run.id,
+      at: time === null ? null : new Date(time).toISOString(),
+      provider: (run.provider_id && providerName.get(run.provider_id)) || "Unknown provider",
+      summary: run.summary,
+    };
+  };
+  const runErrors: RunError[] = failedRuns
+    .filter((run) => {
       const t = runTime(run);
       return t !== null && t >= nowMs - ATTENTION_WINDOW_DAYS * DAY_MS && t <= nowMs;
     })
-    .sort((a, b) => (runTime(b.run) ?? 0) - (runTime(a.run) ?? 0))
-    .map(({ run, status }) => ({
-      runId: run.id,
-      startedAt: run.started_at ?? run.created_at,
-      provider: (run.provider_id && providerName.get(run.provider_id)) || "Unknown provider",
-      summary: run.summary,
-      severity: status === FAILED_RUN_STATUS ? ("failed" as const) : ("partial" as const),
-    }));
+    .map(toRunError);
+  const lastFailure = failedRuns.length > 0 ? toRunError(failedRuns[0]) : null;
 
   /* Upcoming: future interviews and dated application events, chronological. */
   const upcoming: UpcomingItem[] = [];
@@ -797,7 +799,7 @@ export function computeDashboardBundle(
     interviews: input.interviews.length,
     evaluations: input.evaluations.length,
     communications: input.communications.length,
-    automationRuns: input.runCount,
+    automationRuns: input.runs.length,
   };
 
   return {
@@ -809,9 +811,14 @@ export function computeDashboardBundle(
     upcoming: upcoming.slice(0, UPCOMING_LIMIT),
     attention: { upcomingInterviews, stalled, runErrors },
     totals,
-    runs: input.recentRuns,
-    runEvents: input.recentRunEvents,
+    runs: runsNewestFirst.slice(0, RECENT_RUN_LIMIT),
+    lastFailure,
   };
+}
+
+/** A run whose status is failed. Status is matched case-insensitively. Partial runs are not failures. */
+function isFailedRun(run: Pick<Tables<"automation_runs">, "status">): boolean {
+  return run.status.trim().toLowerCase() === FAILED_RUN_STATUS;
 }
 
 function weekKey(time: number): string {
@@ -960,7 +967,8 @@ export function computeInsightsBundle(
       scores: [],
     };
     acc.evaluations += 1;
-    if (evaluation.score != null && !Number.isNaN(Number(evaluation.score))) acc.scores.push(Number(evaluation.score));
+    const score = normalizeScore(evaluation.score);
+    if (score !== null) acc.scores.push(score);
     const apps = appsByOpp.get(evaluation.opportunity_id) ?? [];
     if (apps.length > 0) {
       acc.withApplication += 1;
@@ -1052,27 +1060,12 @@ export function computeInsightsBundle(
 /* Data loading                                                        */
 /* ------------------------------------------------------------------ */
 
-type QueryResult<T> = { data: T[] | null; error: PageError | null };
-
-async function unwrapRows<T>(query: PromiseLike<QueryResult<T>>): Promise<T[]> {
-  const { data, error } = await query;
-  if (error) throw queryError(error);
-  return data ?? [];
-}
-
-async function countRows(query: PromiseLike<{ count: number | null; error: PageError | null }>): Promise<number> {
-  const { count, error } = await query;
-  if (error) throw queryError(error);
-  return count ?? 0;
-}
-
 /**
  * Reads every analytics table once. The result does not depend on the date range, so switching
  * ranges never fetches again; each range is computed from this in memory.
  */
 export async function fetchRawAnalytics(): Promise<RawAnalytics> {
   const supabase = createClient();
-  const attentionSince = new Date(Date.now() - ATTENTION_WINDOW_DAYS * DAY_MS).toISOString();
 
   const [
     applications,
@@ -1083,10 +1076,7 @@ export async function fetchRawAnalytics(): Promise<RawAnalytics> {
     communications,
     organizations,
     providers,
-    recentRuns,
-    recentRunEvents,
-    failedRuns,
-    runCount,
+    runs,
   ] = await Promise.all([
     fetchAll<ApplicationRow & KeysetRow>((after, limit) => {
       let query = supabase.from("applications").select(APPLICATION_COLUMNS).order("id").limit(limit);
@@ -1128,29 +1118,13 @@ export async function fetchRawAnalytics(): Promise<RawAnalytics> {
       if (after) query = query.gt("id", after);
       return query;
     }),
-    unwrapRows(
-      supabase.from("automation_runs").select("*").order("created_at", { ascending: false }).limit(10)
-    ),
-    unwrapRows(
-      supabase
-        .from("automation_run_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(50)
-    ),
-    fetchAll<Tables<"automation_runs">>((after, limit) => {
-      // Status is matched case-insensitively. Partial runs are warnings, failed runs are errors.
-      let query = supabase
-        .from("automation_runs")
-        .select("*")
-        .or(`status.ilike.${FAILED_RUN_STATUS},status.ilike.${PARTIAL_RUN_STATUS}`)
-        .gte("created_at", attentionSince)
-        .order("id")
-        .limit(limit);
+    // Every run is read: the table is small, and "latest" and "recent" are defined by runTime,
+    // which the database cannot order on (it lives in started_at, finished_at or run_key).
+    fetchAll<Tables<"automation_runs"> & KeysetRow>((after, limit) => {
+      let query = supabase.from("automation_runs").select("*").order("id").limit(limit);
       if (after) query = query.gt("id", after);
       return query;
     }),
-    countRows(supabase.from("automation_runs").select("id", { count: "exact", head: true })),
   ]);
 
   return {
@@ -1162,9 +1136,6 @@ export async function fetchRawAnalytics(): Promise<RawAnalytics> {
     communications,
     organizations,
     providers,
-    recentRuns,
-    recentRunEvents,
-    failedRuns,
-    runCount,
+    runs,
   };
 }

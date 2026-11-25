@@ -10,7 +10,6 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { GripVerticalIcon, LoaderCircleIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
@@ -25,6 +24,7 @@ import {
   type ApplicationRow,
   type BoardColumn,
 } from "./application-model";
+import { boardKeyboardCoordinates } from "./board-keyboard";
 import { OutcomeBadge } from "./stage-badge";
 import { useStageMove } from "./use-stage-move";
 
@@ -206,7 +206,7 @@ export function ApplicationsKanban({ rows }: { rows: ApplicationRow[] }) {
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(KeyboardSensor, { coordinateGetter: boardKeyboardCoordinates })
   );
 
   function onDragEnd(event: DragEndEvent) {

@@ -89,7 +89,7 @@ export function ApplicationsToolbar({
 
   return (
     <div className="space-y-3 rounded-xl border bg-card p-3">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-1">
           <label htmlFor={searchId} className="text-xs font-medium text-muted-foreground">
             Search

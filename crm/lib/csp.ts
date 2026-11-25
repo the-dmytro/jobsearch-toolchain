@@ -14,7 +14,16 @@ export type CspOptions = {
   development: boolean;
   /** Adds upgrade-insecure-requests. Set only when the request itself is https. */
   upgradeInsecureRequests: boolean;
+  /**
+   * Allows the Vercel preview toolbar (vercel.live) to load and talk to the page. Set only for
+   * preview deployments. Production and local policies do not change.
+   */
+  vercelPreviewToolbar?: boolean;
 };
+
+const VERCEL_LIVE = "https://vercel.live";
+const VERCEL_TOOLBAR_SOCKET = "wss://ws-us3.pusher.com";
+const VERCEL_TOOLBAR_IMAGE_ORIGINS = ["https://vercel.live", "https://vercel.com"];
 
 /** Websocket form of an http(s) origin, for connect-src. */
 function toWebSocketOrigin(origin: string): string {
@@ -30,6 +39,7 @@ export function buildContentSecurityPolicy({
   supabaseUrl,
   development,
   upgradeInsecureRequests,
+  vercelPreviewToolbar = false,
 }: CspOptions): string {
   const supabaseOrigins = supabaseUrl ? [new URL(supabaseUrl).origin] : [];
   const scriptSrc = [
@@ -37,15 +47,25 @@ export function buildContentSecurityPolicy({
     `'nonce-${nonce}'`,
     "'strict-dynamic'",
     ...(development ? ["'unsafe-eval'"] : []),
+    ...(vercelPreviewToolbar ? [VERCEL_LIVE] : []),
   ].join(" ");
 
   const directives = [
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    ["img-src 'self' data: blob:", ...supabaseOrigins].join(" "),
+    [
+      "img-src 'self' data: blob:",
+      ...supabaseOrigins,
+      ...(vercelPreviewToolbar ? VERCEL_TOOLBAR_IMAGE_ORIGINS : []),
+    ].join(" "),
     "font-src 'self' data:",
-    ["connect-src 'self'", ...supabaseOrigins.flatMap((o) => [o, toWebSocketOrigin(o)])].join(" "),
+    [
+      "connect-src 'self'",
+      ...supabaseOrigins.flatMap((o) => [o, toWebSocketOrigin(o)]),
+      ...(vercelPreviewToolbar ? [VERCEL_LIVE, VERCEL_TOOLBAR_SOCKET] : []),
+    ].join(" "),
+    ...(vercelPreviewToolbar ? [`frame-src 'self' ${VERCEL_LIVE}`] : []),
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

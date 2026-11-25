@@ -90,7 +90,7 @@ export function AttentionCard({ attention, status }: AttentionCardProps) {
       isEmpty={false}
       className="lg:col-span-full"
     >
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <AttentionList
           headingId="attention-upcoming"
           title="Upcoming interviews (7 days)"
@@ -139,30 +139,22 @@ export function AttentionCard({ attention, status }: AttentionCardProps) {
           headingId="attention-errors"
           title="Automation issues"
           count={runErrors.length}
-          emptyText="No automation issues in the last 7 days."
+          emptyText="No failed automation runs in the last 7 days."
           viewAllHref="/runs"
           viewAllLabel="automation runs"
         >
           {runErrors.slice(0, ATTENTION_ROW_LIMIT).map((row) => (
             <li key={row.runId}>
-              <Link
-                href={`/runs/${row.runId}`}
-                className={cn(ROW_CLASS, row.severity === "failed" ? "border-danger/40" : "border-warning/40")}
-              >
+              <Link href={`/runs/${row.runId}`} className={cn(ROW_CLASS, "border-danger/40")}>
                 <span className="truncate font-medium">
                   {row.provider}
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                    {row.severity === "failed" ? "Failed" : "Partial"}
-                  </span>
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">Failed</span>
                 </span>
                 <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {row.summary?.trim() ||
-                    (row.severity === "failed"
-                      ? "Run failed without a message"
-                      : "Run finished with some work not completed")}
+                  {row.summary?.trim() || "Run failed without a message"}
                 </span>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {formatRelative(row.startedAt)}
+                  {row.at ? formatRelative(row.at) : "Time not recorded"}
                 </span>
               </Link>
             </li>

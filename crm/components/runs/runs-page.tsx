@@ -21,16 +21,13 @@ import {
 import { fetchAll } from "@/lib/fetch-all";
 import { formatDate, formatNumber, formatRelative } from "@/lib/format";
 import { qk } from "@/lib/query-keys";
+import { compareRunsNewestFirst, runTime } from "@/lib/run-time";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/types/database.types";
 
 export type RunRow = Tables<"automation_runs"> & {
   providers: { slug: string; name: string } | null;
 };
-
-function runTime(row: RunRow): string | null {
-  return row.finished_at ?? row.created_at ?? null;
-}
 
 export function RunsPage() {
   const query = useQuery({
@@ -57,14 +54,7 @@ export function RunsPage() {
 
   const [search, setSearch] = useState("");
 
-  const sorted = useMemo(() => {
-    const rows = query.data ?? [];
-    return [...rows].sort((a, b) => {
-      const at = Date.parse(runTime(a) ?? "") || 0;
-      const bt = Date.parse(runTime(b) ?? "") || 0;
-      return bt - at;
-    });
-  }, [query.data]);
+  const sorted = useMemo(() => [...(query.data ?? [])].sort(compareRunsNewestFirst), [query.data]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -137,7 +127,7 @@ export function RunsPage() {
                     <TableHead scope="col">Provider</TableHead>
                     <TableHead scope="col">Status</TableHead>
                     <TableHead scope="col">Results</TableHead>
-                    <TableHead scope="col">Finished</TableHead>
+                    <TableHead scope="col">Run time</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -158,12 +148,12 @@ export function RunsPage() {
                           {formatNumber(row.evaluations_count)} evaluations
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
-                          {time ? (
-                            <time dateTime={time} title={formatRelative(time)}>
+                          {time === null ? (
+                            <span className="text-muted-foreground">Time not recorded</span>
+                          ) : (
+                            <time dateTime={new Date(time).toISOString()} title={formatRelative(time)}>
                               {formatDate(time, { withTime: true })}
                             </time>
-                          ) : (
-                            "—"
                           )}
                         </TableCell>
                       </TableRow>

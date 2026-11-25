@@ -15,6 +15,7 @@ function notConfiguredResponse(request: NextRequest, nonce: string): NextRespons
     nonce,
     development: process.env.NODE_ENV === "development",
     upgradeInsecureRequests: request.nextUrl.protocol === "https:",
+    vercelPreviewToolbar: process.env.VERCEL_ENV === "preview",
   });
   const response = new NextResponse(NOT_CONFIGURED_BODY, {
     status: 503,
@@ -42,6 +43,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     supabaseUrl,
     development: process.env.NODE_ENV === "development",
     upgradeInsecureRequests: request.nextUrl.protocol === "https:",
+    vercelPreviewToolbar: process.env.VERCEL_ENV === "preview",
   });
 
   // Next.js reads the nonce from the request CSP header and applies it to its own

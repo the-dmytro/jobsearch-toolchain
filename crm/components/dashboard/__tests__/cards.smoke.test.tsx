@@ -159,10 +159,9 @@ const ATTENTION: AttentionBundle = {
   runErrors: [
     {
       runId: "run-f1",
-      startedAt: "2024-06-19T12:00:00.000Z",
+      at: "2024-06-19T12:00:00.000Z",
       provider: "Ashby",
       summary: "feed returned 500",
-      severity: "failed",
     },
   ],
 };
@@ -192,32 +191,12 @@ function makeRun(overrides: Partial<Tables<"automation_runs">>): Tables<"automat
   };
 }
 
-function makeRunEvent(
-  overrides: Partial<Tables<"automation_run_events">>
-): Tables<"automation_run_events"> {
-  return {
-    id: "event-1",
-    provider_id: null,
-    automation_run_id: null,
-    run_key: null,
-    event_type: "fetch",
-    severity: "info",
-    message: null,
-    metadata: {},
-    created_at: "2024-06-30T09:00:00.000Z",
-    ...overrides,
-  };
-}
-
 const RUNS: Tables<"automation_runs">[] = [
   makeRun({ id: "run-1", run_key: "2024-06-30-ashby", status: "completed" }),
   makeRun({ id: "run-2", run_key: "2024-06-29-lever", status: "failed" }),
 ];
 
-const RUN_EVENTS: Tables<"automation_run_events">[] = [
-  makeRunEvent({ id: "rev-1", severity: "info", message: "fetched 42 items" }),
-  makeRunEvent({ id: "rev-2", severity: "error", event_type: "parse", message: "feed returned 500" }),
-];
+const LAST_FAILURE = { runId: "run-2", at: "2024-06-29T09:00:00.000Z", provider: "Lever", summary: "feed returned 500" };
 
 describe("DashboardCard states", () => {
   it("replaces the card with a labelled skeleton while loading", () => {
@@ -291,18 +270,17 @@ describe("AttentionCard", () => {
     expect(within(upcoming!).getAllByRole("link", { name: /Company/ })).toHaveLength(5);
   });
 
-  it("labels a partial run as partial, not as a failure", () => {
-    const partial: AttentionBundle = {
+  it("says when a failed run has no recorded time", () => {
+    const untimed: AttentionBundle = {
       ...NO_ATTENTION,
-      runErrors: [
-        { runId: "run-p1", startedAt: "2024-06-18T12:00:00.000Z", provider: "Lever", summary: null, severity: "partial" },
-      ],
+      runErrors: [{ runId: "run-u1", at: null, provider: "Lever", summary: null }],
     };
-    render(<AttentionCard attention={partial} status={READY} />);
+    render(<AttentionCard attention={untimed} status={READY} />);
 
     const issues = screen.getByRole("heading", { name: "Automation issues" }).closest("section");
-    expect(within(issues!).getByText("Partial")).toBeInTheDocument();
-    expect(within(issues!).getByText("Run finished with some work not completed")).toBeInTheDocument();
+    expect(within(issues!).getByText("Failed")).toBeInTheDocument();
+    expect(within(issues!).getByText("Run failed without a message")).toBeInTheDocument();
+    expect(within(issues!).getByText("Time not recorded")).toBeInTheDocument();
   });
 
   it("uses a friendly empty text for each list", () => {
@@ -310,7 +288,7 @@ describe("AttentionCard", () => {
 
     expect(screen.getByText("No interviews in the next 7 days.")).toBeInTheDocument();
     expect(screen.getByText("Nothing stalled. Nice.")).toBeInTheDocument();
-    expect(screen.getByText("No automation issues in the last 7 days.")).toBeInTheDocument();
+    expect(screen.getByText("No failed automation runs in the last 7 days.")).toBeInTheDocument();
   });
 });
 
@@ -429,6 +407,18 @@ describe("SourceEffectivenessCard", () => {
 });
 
 describe("PipelineAgingCard", () => {
+  it("says how many open applications there are, not how many rows it was given", () => {
+    render(<PipelineAgingCard pipeline={PIPELINE} openCount={25} status={READY} />);
+
+    expect(screen.getByText("Showing the 10 longest of 25 open applications.")).toBeInTheDocument();
+  });
+
+  it("shows no footer when every open application fits on the card", () => {
+    render(<PipelineAgingCard pipeline={PIPELINE} openCount={PIPELINE.length} status={READY} />);
+
+    expect(screen.queryByText(/Showing the 10 longest/)).not.toBeInTheDocument();
+  });
+
   it("links each open application and labels its aging bucket in text", () => {
     render(<PipelineAgingCard pipeline={PIPELINE} status={READY} />);
 
@@ -464,16 +454,22 @@ describe("WeeklyActivityCard", () => {
 });
 
 describe("RunHealthCard", () => {
-  it("shows the latest run, the success rate and the last error", () => {
-    render(<RunHealthCard runs={RUNS} runEvents={RUN_EVENTS} status={READY} />);
+  it("shows the latest run, how many finished without errors, and the last failure", () => {
+    render(<RunHealthCard runs={RUNS} lastFailure={LAST_FAILURE} status={READY} />);
 
     expect(screen.getByRole("link", { name: "2024-06-30-ashby" })).toHaveAttribute("href", "/runs/run-1");
-    expect(screen.getByText("50%")).toBeInTheDocument();
-    expect(screen.getByText("feed returned 500")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "feed returned 500" })).toHaveAttribute("href", "/runs/run-2");
+  });
+
+  it("says the time is not recorded when the last failure has no time", () => {
+    render(<RunHealthCard runs={RUNS} lastFailure={{ ...LAST_FAILURE, at: null }} status={READY} />);
+
+    expect(screen.getByText("Time not recorded")).toBeInTheDocument();
   });
 
   it("renders an empty state with no runs", () => {
-    render(<RunHealthCard runs={[]} runEvents={[]} status={READY} />);
+    render(<RunHealthCard runs={[]} lastFailure={null} status={READY} />);
 
     expect(screen.getByText("No automation runs yet")).toBeInTheDocument();
   });

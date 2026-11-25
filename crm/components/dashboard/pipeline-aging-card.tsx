@@ -35,6 +35,8 @@ const LEGEND: ReadonlyArray<{ bucket: AgingBucket; text: string }> = [
 
 type PipelineAgingCardProps = {
   pipeline?: PipelineAgingRow[];
+  /** Every open application, not only the rows in `pipeline`. Same number as the Open pipeline KPI. */
+  openCount?: number;
   status: CardStatus;
 };
 
@@ -43,8 +45,9 @@ type PipelineAgingCardProps = {
  * row shown. Each row links to its application and carries a text label, so the bucket is
  * never read from colour alone.
  */
-export function PipelineAgingCard({ pipeline, status }: PipelineAgingCardProps) {
+export function PipelineAgingCard({ pipeline, openCount, status }: PipelineAgingCardProps) {
   const rows = (pipeline ?? []).slice(0, AGING_ROW_LIMIT);
+  const total = openCount ?? pipeline?.length ?? 0;
   const longest = Math.max(1, ...rows.map((row) => row.daysSinceActivity));
 
   return (
@@ -56,10 +59,9 @@ export function PipelineAgingCard({ pipeline, status }: PipelineAgingCardProps) 
       emptyTitle="No open applications"
       emptyDescription="Open applications appear here with the days since their last activity."
       footer={
-        (pipeline?.length ?? 0) > AGING_ROW_LIMIT ? (
+        total > AGING_ROW_LIMIT ? (
           <p className="border-t pt-3 text-xs text-muted-foreground">
-            Showing the {formatNumber(AGING_ROW_LIMIT)} longest of {formatNumber(pipeline?.length ?? 0)} open
-            applications.
+            Showing the {formatNumber(AGING_ROW_LIMIT)} longest of {formatNumber(total)} open applications.
           </p>
         ) : null
       }

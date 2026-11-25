@@ -20,27 +20,31 @@ export function TextAlternative<T>({
   columns: ReadonlyArray<AlternativeColumn<T>>;
   rows: readonly T[];
 }) {
+  // The wrapper carries sr-only, not the table: a table ignores a 1px width and would still
+  // push the page sideways.
   return (
-    <table className="sr-only">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          {columns.map((column) => (
-            <th key={column.key} scope="col">
-              {column.header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, rowIndex) => (
-          <tr key={rowIndex}>
+    <div className="sr-only">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
             {columns.map((column) => (
-              <td key={column.key}>{column.cell(row)}</td>
+              <th key={column.key} scope="col">
+                {column.header}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {columns.map((column) => (
+                <td key={column.key}>{column.cell(row)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

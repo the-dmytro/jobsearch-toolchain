@@ -291,7 +291,7 @@ export function InsightsPage() {
       />
 
       <ErrorBoundary title="Insights failed to render">
-        <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
           <MatchScoreCard rows={data?.scoreOutcomes} rangeText={rangeText} status={status} />
           <OutcomesCard data={data} rangeText={rangeText} status={status} />
           <DeclineReasonsCard data={data} rangeText={rangeText} status={status} />
