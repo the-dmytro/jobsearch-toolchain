@@ -20,7 +20,7 @@ Copy [`.env.example`](../.env.example) to `crm/.env.local` (or use root `.env` f
 |----------|--------|--------|--------|
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | yes | Required. Project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | yes | Required. Anon key (RLS) |
-| `NEXT_PUBLIC_SITE_URL` | optional | optional | Override app origin; on Vercel auto-detects from `VERCEL_PROJECT_PRODUCTION_URL` / `VERCEL_URL` (localhost value is ignored on Vercel) |
+| `NEXT_PUBLIC_SITE_URL` | optional | optional | Override app origin; on Vercel auto-detects from `VERCEL_PROJECT_PRODUCTION_URL` / `VERCEL_URL` (localhost value is ignored on Vercel). Magic links return to the host the sign-in form was submitted on (any domain of this project on Vercel, local hosts, or this URL), so the PKCE cookie is found |
 | `CRM_OWNER_EMAIL` | — | yes | Comma-separated allowlist; must match Supabase Auth user email(s) |
 | `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY` | — | yes (server only) | Required (one of the two). Signed URLs for artifacts via `getArtifactSignedUrl` |
 | `SUPABASE_STORAGE_BUCKET` | — | optional | Defaults to `job-artifacts` |

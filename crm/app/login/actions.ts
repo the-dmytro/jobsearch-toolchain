@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { resolveAuthRedirectOrigin } from "@/lib/auth-redirect";
 import { resolveServerSiteUrl } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,27 +29,15 @@ function formatAuthError(error: { message: string; code?: string }): string {
   return "We couldn't send the sign-in link. Check the address and try again.";
 }
 
-async function resolveAuthRedirectOrigin(): Promise<string> {
-  const serverSiteUrl = resolveServerSiteUrl();
-  if (
-    !serverSiteUrl.includes("localhost") &&
-    !serverSiteUrl.includes("127.0.0.1")
-  ) {
-    return serverSiteUrl;
-  }
-
+async function authRedirectOrigin(): Promise<string> {
   const headerStore = await headers();
-  const host =
-    headerStore.get("x-forwarded-host")?.split(",")[0]?.trim() ??
-    headerStore.get("host")?.trim();
-  const protocol =
-    headerStore.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? "https";
-
-  if (host) {
-    return `${protocol}://${host}`.replace(/\/$/, "");
-  }
-
-  return resolveServerSiteUrl();
+  return resolveAuthRedirectOrigin({
+    forwardedHost: headerStore.get("x-forwarded-host"),
+    host: headerStore.get("host"),
+    forwardedProto: headerStore.get("x-forwarded-proto"),
+    siteUrl: resolveServerSiteUrl(),
+    onVercel: process.env.VERCEL === "1",
+  });
 }
 
 export async function sendMagicLink(email: string): Promise<SendMagicLinkResult> {
@@ -68,7 +57,7 @@ export async function sendMagicLink(email: string): Promise<SendMagicLinkResult>
     };
   }
 
-  const origin = await resolveAuthRedirectOrigin();
+  const origin = await authRedirectOrigin();
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithOtp({
     email: trimmed,
