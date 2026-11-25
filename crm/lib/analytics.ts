@@ -49,25 +49,43 @@ export type DashboardKpis = {
   /** Interviews whose scheduled_at is in range and not in the future. */
   interviewsInRange: number;
   interviewsPrev: number;
+  /** Applications applied in range that reached the offer stage (cohort, same rule as the funnel). */
+  offersInRange: number;
+  offersPrev: number;
   newOpportunities: number;
   newOpportunitiesPrev: number;
   avgScore: number | null;
   avgScorePrev: number | null;
 };
 
-export type FunnelStepKey = "opportunities" | "evaluated" | "applied" | "interviewing" | "offers";
+export type FunnelStepKey = "applied" | "screening" | "interview" | "final" | "offer";
 
+/**
+ * One step of the cohort funnel. `count` is cumulative: applications that reached this stage
+ * or a later one. Counts never increase down the funnel, so each conversion is at most 100%.
+ */
 export type FunnelStep = {
   key: FunnelStepKey;
   label: string;
   count: number;
-  /** Conversion from the previous step. Null for the first step. */
+  /** Conversion from the previous step: count / previous count. Null for the first step. */
   conversion: Rate | null;
 };
 
-/** Pipeline snapshot across all records (not range-bound). */
+/** Sourcing activity in the selected range, shown beside the cohort funnel. */
+export type SourcingStats = {
+  /** Opportunities created in range. */
+  opportunitiesFound: number;
+  /** Opportunities created in range that have at least one evaluation. */
+  opportunitiesEvaluated: number;
+  /** Applications whose applied date (or created date) is in range. */
+  applied: number;
+};
+
+/** Cohort funnel: applications applied in range, counted by the furthest stage they reached. */
 export type FunnelSummary = {
   steps: FunnelStep[];
+  sourcing: SourcingStats;
 };
 
 export type WeeklyActivityPoint = {
@@ -87,6 +105,9 @@ export type SourceEffectiveness = {
   opportunities: number;
   applications: number;
   applicationsWithInterview: number;
+  /** Applications with any response (reply, invite, stage change past applied, inbound message). */
+  applicationsWithResponse: number;
+  responseRate: Rate;
   offers: number;
   appToInterview: Rate;
 };
@@ -199,7 +220,10 @@ export type InterviewOutcome = {
 export type InsightsBundle = {
   scoreOutcomes: ScoreOutcomeRow[];
   outcomeBreakdown: OutcomeBreakdown[];
+  /** Top eight decline reasons in range, most frequent first. */
   declineReasons: DeclineReason[];
+  /** Applications in range whose decline reason is not among `declineReasons`, summed. */
+  declineOther: number;
   compensationBySeniority: CompensationRow[];
   interviewOutcomes: InterviewOutcome[];
 };
@@ -269,7 +293,16 @@ const STALLED_DAYS = 14;
 const ATTENTION_WINDOW_DAYS = 7;
 const PIPELINE_AGING_LIMIT = 25;
 const UPCOMING_LIMIT = 12;
-const DECLINE_REASON_LIMIT = 12;
+const DECLINE_REASON_LIMIT = 8;
+/** Furthest pipeline index (see stageIndex) that counts as having reached each funnel step. */
+const FUNNEL_STEPS: ReadonlyArray<{ key: FunnelStepKey; label: string; minIndex: number }> = [
+  { key: "applied", label: "Applied", minIndex: 0 },
+  { key: "screening", label: "Screening", minIndex: 1 },
+  { key: "interview", label: "Interview", minIndex: 2 },
+  { key: "final", label: "Final / onsite", minIndex: 3 },
+  { key: "offer", label: "Offer", minIndex: 4 },
+];
+const OFFER_INDEX = 4;
 const FAILED_RUN_STATUSES = new Set(["failed", "error", "failure"]);
 const RESPONSE_EVENT_TYPES = new Set(["reply", "interview_invite", "response"]);
 const INTERVIEW_STAGES: ReadonlySet<StageKey> = new Set<StageKey>([
@@ -363,6 +396,11 @@ type AppFact = {
   closedAt: number | null;
   /** Earliest response evidence, or null when none. */
   responseAt: number | null;
+  /**
+   * Furthest pipeline index reached, from the current stage, the stage history and an offer
+   * outcome. Terminal stages keep the furthest step seen before them. Never below 0.
+   */
+  reachedIndex: number;
   reachedInterview: boolean;
   hasInterview: boolean;
 };
@@ -442,6 +480,10 @@ function buildAppFacts(input: BuildInput, nowMs: number): AppFact[] {
       outcome === "offer" ||
       changes.some((c) => c.stage !== null && stageIndex(c.stage) >= 1);
 
+    let reachedIndex = Math.max(0, stageIndex(stage));
+    for (const change of changes) reachedIndex = Math.max(reachedIndex, stageIndex(change.stage));
+    if (outcome === "offer") reachedIndex = Math.max(reachedIndex, OFFER_INDEX);
+
     return {
       id: app.id,
       opportunityId: app.opportunity_id ?? null,
@@ -455,6 +497,7 @@ function buildAppFacts(input: BuildInput, nowMs: number): AppFact[] {
       daysInStage,
       closedAt,
       responseAt,
+      reachedIndex,
       reachedInterview,
       hasInterview,
     };
@@ -513,6 +556,8 @@ export function computeDashboardBundle(
     responseRatePrev: responseRateFor(prevApps),
     interviewsInRange: interviewsIn(range),
     interviewsPrev: interviewsIn(prev),
+    offersInRange: curApps.filter((f) => f.reachedIndex >= OFFER_INDEX).length,
+    offersPrev: prevApps.filter((f) => f.reachedIndex >= OFFER_INDEX).length,
     newOpportunities: oppsIn(range).length,
     newOpportunitiesPrev: oppsIn(prev).length,
     avgScore: average(scoredIn(range)),
@@ -520,26 +565,26 @@ export function computeDashboardBundle(
   };
 
   /*
-   * Pipeline snapshot across all records, as the card describes it. Steps are not limited
-   * to the range because each step may be dated differently from the one before it.
+   * Cohort funnel: applications applied in range. Each step counts the cohort members that
+   * reached that stage or a later one, so counts never increase down the funnel and each
+   * conversion is at most 100%. Sourcing stats are reported beside it, for the same range.
    */
   const evaluatedOppIds = new Set(input.evaluations.map((e) => e.opportunity_id));
-  const evaluatedCount = oppTimes.filter((o) => evaluatedOppIds.has(o.row.id)).length;
-  const interviewingCount = facts.filter((f) => f.reachedInterview).length;
-  const offerCount = facts.filter((f) => f.outcome === "offer").length;
-  const counts: Array<{ key: FunnelStepKey; label: string; count: number }> = [
-    { key: "opportunities", label: "Opportunities", count: oppTimes.length },
-    { key: "evaluated", label: "Evaluated", count: evaluatedCount },
-    { key: "applied", label: "Applied", count: facts.length },
-    { key: "interviewing", label: "Interviewing", count: interviewingCount },
-    { key: "offers", label: "Offer", count: offerCount },
-  ];
+  const counts = FUNNEL_STEPS.map((step) => ({
+    key: step.key,
+    label: step.label,
+    count: curApps.filter((f) => f.reachedIndex >= step.minIndex).length,
+  }));
   const funnel: FunnelSummary = {
     steps: counts.map((step, index) => ({
       ...step,
-      conversion:
-        index === 0 ? null : rate(step.count, counts[index - 1].count),
+      conversion: index === 0 ? null : rate(step.count, counts[index - 1].count),
     })),
+    sourcing: {
+      opportunitiesFound: oppsIn(range).length,
+      opportunitiesEvaluated: oppsIn(range).filter((o) => evaluatedOppIds.has(o.row.id)).length,
+      applied: curApps.length,
+    },
   };
 
   /* Weekly activity, Monday-anchored, clipped to the range. */
@@ -730,6 +775,7 @@ function buildSources(
     const opps = oppsInRange.filter((o) => (o.provider_id ?? null) === providerId).length;
     const apps = appsInRange.filter((f) => (f.providerId ?? null) === providerId);
     const withInterview = apps.filter((f) => interviewedApps.has(f.id)).length;
+    const withResponse = apps.filter((f) => f.responseAt !== null).length;
     const offers = apps.filter((f) => f.outcome === "offer").length;
     rows.push({
       providerId,
@@ -738,6 +784,8 @@ function buildSources(
       opportunities: opps,
       applications: apps.length,
       applicationsWithInterview: withInterview,
+      applicationsWithResponse: withResponse,
+      responseRate: rate(withResponse, apps.length),
       offers,
       appToInterview: rate(withInterview, apps.length),
     });
@@ -770,10 +818,13 @@ export function computeInsightsBundle(
   for (const f of curApps) {
     if (f.declineReason) declineCounts.set(f.declineReason, (declineCounts.get(f.declineReason) ?? 0) + 1);
   }
-  const declineReasons: DeclineReason[] = Array.from(declineCounts.entries())
+  const rankedDeclines: DeclineReason[] = Array.from(declineCounts.entries())
     .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, DECLINE_REASON_LIMIT);
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  const declineReasons = rankedDeclines.slice(0, DECLINE_REASON_LIMIT);
+  const declineOther = rankedDeclines
+    .slice(DECLINE_REASON_LIMIT)
+    .reduce((sum, row) => sum + row.count, 0);
 
   /* Score distribution: one row per evaluation, best outcome across its applications. */
   const appsByOpp = groupBy(facts, (f) => f.opportunityId);
@@ -875,6 +926,7 @@ export function computeInsightsBundle(
     scoreOutcomes,
     outcomeBreakdown,
     declineReasons,
+    declineOther,
     compensationBySeniority,
     interviewOutcomes,
   };

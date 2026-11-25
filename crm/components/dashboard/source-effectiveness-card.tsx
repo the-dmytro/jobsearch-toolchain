@@ -1,86 +1,94 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { useState } from "react";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
+import { DashboardCard, type CardStatus } from "@/components/dashboard/dashboard-card";
+import { Button } from "@/components/ui/button";
 import type { SourceEffectiveness } from "@/lib/analytics";
+import { formatNumber, formatPercent } from "@/lib/format";
 
-const chartConfig = {
-  app_to_interview_pct: {
-    label: "App → interview %",
-    color: "var(--chart-4)",
-  },
-} satisfies ChartConfig;
+/** Sources with fewer applications than this sit behind "Show all". */
+export const MIN_SOURCE_APPLICATIONS = 3;
 
 type SourceEffectivenessCardProps = {
-  sources: SourceEffectiveness[];
+  sources?: SourceEffectiveness[];
+  status: CardStatus;
 };
 
-export function SourceEffectivenessCard({ sources }: SourceEffectivenessCardProps) {
-  const chartData = sources
-    .filter((s) => s.applications > 0)
-    .slice(0, 8)
-    .map((s) => ({
-      source: s.slug || s.name || "unknown",
-      app_to_interview_pct: s.appToInterview.value == null ? 0 : Math.round(s.appToInterview.value * 100),
-      applications: s.applications,
-      interviews: s.applicationsWithInterview,
-    }));
+function byResponseRate(a: SourceEffectiveness, b: SourceEffectiveness): number {
+  const rateA = a.responseRate.value ?? -1;
+  const rateB = b.responseRate.value ?? -1;
+  return rateB - rateA || b.applications - a.applications || a.name.localeCompare(b.name);
+}
+
+/**
+ * Response rate per source, as horizontal bars sorted by rate. Each bar is labelled with its
+ * rate and the number of applications behind it, so a rate on a small sample is never shown alone.
+ */
+export function SourceEffectivenessCard({ sources, status }: SourceEffectivenessCardProps) {
+  const [showAll, setShowAll] = useState(false);
+
+  const withApplications = (sources ?? []).filter((source) => source.applications > 0);
+  const shown = withApplications
+    .filter((source) => source.applications >= MIN_SOURCE_APPLICATIONS)
+    .sort(byResponseRate);
+  const hidden = withApplications
+    .filter((source) => source.applications < MIN_SOURCE_APPLICATIONS)
+    .sort((a, b) => b.applications - a.applications || a.name.localeCompare(b.name));
+  const visible = showAll ? [...shown, ...hidden] : shown;
+
+  const footer =
+    hidden.length > 0 ? (
+      <div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll
+            ? "Show fewer sources"
+            : `Show all ${formatNumber(withApplications.length)} sources`}
+        </Button>
+      </div>
+    ) : null;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Source effectiveness</CardTitle>
-        <CardDescription>Application-to-interview conversion by provider</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {chartData.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No application data yet</p>
-        ) : (
-          <ChartContainer config={chartConfig} className="h-72 w-full">
-            <BarChart data={chartData} margin={{ left: 8, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="source" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} width={32} />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value, _name, item) => {
-                      const payload = item.payload as {
-                        applications?: number;
-                        interviews?: number;
-                      };
-                      return (
-                        <span>
-                          {value}% ({payload.applications ?? 0} apps,{" "}
-                          {payload.interviews ?? 0} interviews)
-                        </span>
-                      );
-                    }}
-                  />
-                }
-              />
-              <Bar
-                dataKey="app_to_interview_pct"
-                fill="var(--color-app_to_interview_pct)"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ChartContainer>
-        )}
-      </CardContent>
-    </Card>
+    <DashboardCard
+      title="Source effectiveness"
+      description="Share of applications that got any response, by source. Sources with fewer than 3 applications are hidden."
+      status={status}
+      isEmpty={withApplications.length === 0}
+      emptyTitle="No applications from a source yet"
+      emptyDescription="Sources appear here once applications in the range are linked to one."
+      footer={footer}
+    >
+      {shown.length === 0 && !showAll ? (
+        <p className="text-sm text-muted-foreground">
+          No source has {MIN_SOURCE_APPLICATIONS} or more applications in this range yet.
+        </p>
+      ) : null}
+      <ul className="space-y-3" aria-label="Response rate by source">
+        {visible.map((source) => {
+          const pct = source.responseRate.value == null ? 0 : source.responseRate.value * 100;
+          return (
+            <li key={source.providerId ?? "unassigned"} className="space-y-1">
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="truncate font-medium">{source.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {source.responseRate.value == null
+                    ? "No applications"
+                    : `${formatPercent(source.responseRate.value)} of ${formatNumber(source.applications)} apps`}
+                </span>
+              </div>
+              <div aria-hidden="true" className="h-2 overflow-hidden rounded-sm bg-muted">
+                <div className="h-full rounded-sm bg-chart-1" style={{ width: `${pct}%` }} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </DashboardCard>
   );
 }

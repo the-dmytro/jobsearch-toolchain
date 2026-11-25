@@ -394,19 +394,123 @@ describe("computeDashboardBundle weekly velocity", () => {
   });
 });
 
-describe("computeDashboardBundle funnel and sources", () => {
-  it("builds the funnel from the stage each application reached", () => {
-    const { funnel } = dashboard();
-    const steps = Object.fromEntries(funnel.steps.map((step) => [step.key, step]));
+/**
+ * Cohort of applications applied in June (RANGE). Each one reaches a different furthest step:
+ * - c1 offer (current stage)           -> reaches offer
+ * - c2 onsite, history through onsite  -> reaches final / onsite
+ * - c3 declined after screening        -> keeps the furthest step before it (screening)
+ * - c4 still applied, no history       -> applied only
+ * - c5 applied in May                  -> outside the cohort; counts in the previous period
+ * - c6 no applied_at, created in June  -> dated by created_at, reaches interview
+ * - c7 outcome offer, stage applied    -> an offer outcome counts as reaching offer
+ */
+function cohortInput(): DashboardInput {
+  const base = dashboardInput();
+  return {
+    ...base,
+    applications: [
+      application({ id: "c1", organization_id: "org-1", current_stage: "offer", applied_at: "2024-06-02T12:00:00.000Z" }),
+      application({ id: "c2", organization_id: "org-1", current_stage: "onsite", applied_at: "2024-06-03T12:00:00.000Z" }),
+      application({
+        id: "c3",
+        organization_id: "org-2",
+        status: "declined",
+        current_stage: "declined",
+        outcome: "declined",
+        applied_at: "2024-06-04T12:00:00.000Z",
+      }),
+      application({ id: "c4", organization_id: "org-3", current_stage: "applied", applied_at: "2024-06-05T12:00:00.000Z" }),
+      application({ id: "c5", organization_id: "org-4", current_stage: "offer", applied_at: "2024-05-20T12:00:00.000Z" }),
+      application({ id: "c6", organization_id: "org-1", current_stage: "tech_interview", applied_at: null, created_at: "2024-06-06T12:00:00.000Z" }),
+      application({ id: "c7", organization_id: "org-2", current_stage: "applied", outcome: "offer", applied_at: "2024-06-07T12:00:00.000Z" }),
+    ],
+    events: [
+      event({ id: "cev-2a", application_id: "c2", event_type: "stage_change", event_at: "2024-06-04T12:00:00.000Z", title: "Stage → screening" }),
+      event({ id: "cev-2b", application_id: "c2", event_type: "stage_change", event_at: "2024-06-08T12:00:00.000Z", title: "Stage → tech_interview" }),
+      event({ id: "cev-2c", application_id: "c2", event_type: "stage_change", event_at: "2024-06-12T12:00:00.000Z", title: "Stage → onsite" }),
+      event({ id: "cev-3a", application_id: "c3", event_type: "stage_change", event_at: "2024-06-08T12:00:00.000Z", title: "Stage → screening" }),
+      event({ id: "cev-3b", application_id: "c3", event_type: "stage_change", event_at: "2024-06-14T12:00:00.000Z", title: "Stage → declined" }),
+    ],
+    interviews: [],
+  };
+}
 
-    expect(steps.opportunities.count).toBe(3);
-    expect(steps.evaluated.count).toBe(3);
-    expect(steps.applied.count).toBe(6);
-    // Reached an interview: app-a (screening), app-b (interview on Jun 5), app-d (offer).
-    expect(steps.interviewing.count).toBe(3);
-    expect(steps.offers.count).toBe(1);
-    expect(steps.opportunities.conversion).toBeNull();
-    expect(steps.evaluated.conversion).toEqual({ value: 1, n: 3 });
+describe("computeDashboardBundle cohort funnel", () => {
+  const cohort = () => dashboard(cohortInput());
+
+  it("counts each step as the applications that reached that stage or a later one", () => {
+    const steps = cohort().funnel.steps;
+
+    expect(steps.map((step) => [step.key, step.count])).toEqual([
+      ["applied", 6],
+      ["screening", 5],
+      ["interview", 4],
+      ["final", 3],
+      ["offer", 2],
+    ]);
+  });
+
+  it("gives conversion as step over previous step, with the previous count as n", () => {
+    const steps = cohort().funnel.steps;
+
+    expect(steps[0].conversion).toBeNull();
+    expect(steps[1].conversion).toEqual({ value: 5 / 6, n: 6 });
+    expect(steps[2].conversion).toEqual({ value: 4 / 5, n: 5 });
+    expect(steps[3].conversion).toEqual({ value: 3 / 4, n: 4 });
+    expect(steps[4].conversion).toEqual({ value: 2 / 3, n: 3 });
+  });
+
+  it("never increases down the funnel and never converts above 100%", () => {
+    for (const bundle of [cohort(), dashboard()]) {
+      const steps = bundle.funnel.steps;
+      for (let i = 1; i < steps.length; i += 1) {
+        expect(steps[i].count).toBeLessThanOrEqual(steps[i - 1].count);
+        const value = steps[i].conversion?.value;
+        if (value !== null && value !== undefined) {
+          expect(value).toBeLessThanOrEqual(1);
+          expect(value).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it("keeps the furthest step a declined application reached before it closed", () => {
+    const input = cohortInput();
+    const declinedOnly = { ...input, applications: input.applications.filter((app) => app.id === "c3") };
+
+    // Applied, then screening (reached before it was declined). Nothing further.
+    expect(dashboard(declinedOnly).funnel.steps.map((step) => step.count)).toEqual([1, 1, 0, 0, 0]);
+  });
+
+  it("reports the in-range sourcing stats beside the funnel", () => {
+    // Opportunities created in June are opp-1 and opp-3; both have an evaluation. Applied is the cohort.
+    expect(dashboard().funnel.sourcing).toEqual({ opportunitiesFound: 2, opportunitiesEvaluated: 2, applied: 3 });
+  });
+
+  it("counts offers in range and in the previous period on the KPIs", () => {
+    const { kpis } = cohort();
+
+    expect(kpis.offersInRange).toBe(2);
+    // c5 applied in May and reached an offer, so it counts in the previous period.
+    expect(kpis.offersPrev).toBe(1);
+  });
+});
+
+describe("computeDashboardBundle funnel and sources", () => {
+  it("builds the cohort funnel from the applications applied in range", () => {
+    const { funnel } = dashboard();
+
+    // app-a, app-b and app-e applied in June. Only app-a reached a stage past applied (screening).
+    expect(funnel.steps.map((step) => [step.key, step.count])).toEqual([
+      ["applied", 3],
+      ["screening", 1],
+      ["interview", 0],
+      ["final", 0],
+      ["offer", 0],
+    ]);
+    expect(funnel.steps[1].conversion).toEqual({ value: 1 / 3, n: 3 });
+    expect(funnel.steps[2].conversion).toEqual({ value: 0, n: 1 });
+    expect(funnel.steps[3].conversion).toEqual({ value: null, n: 0 });
   });
 
   it("reports per-provider conversion with an unassigned bucket", () => {
@@ -415,6 +519,7 @@ describe("computeDashboardBundle funnel and sources", () => {
 
     expect(bySlug.get("ashby")).toMatchObject({ opportunities: 1, applications: 1, applicationsWithInterview: 1 });
     expect(bySlug.get("ashby")?.appToInterview).toEqual({ value: 1, n: 1 });
+    expect(bySlug.get("ashby")?.responseRate).toEqual({ value: 1, n: 1 });
     expect(bySlug.get("lever")).toMatchObject({ applications: 1, applicationsWithInterview: 1 });
     expect(bySlug.get("unassigned")).toMatchObject({ applications: 1, applicationsWithInterview: 0 });
     expect(bySlug.get("unassigned")?.appToInterview).toEqual({ value: 0, n: 1 });
@@ -590,6 +695,26 @@ describe("computeInsightsBundle outcomes and reasons", () => {
 
   it("counts decline reasons for applications in range only, trimmed", () => {
     expect(insights().declineReasons).toEqual([{ reason: "Salary", count: 1 }]);
+    expect(insights().declineOther).toBe(0);
+  });
+
+  it("keeps the top eight decline reasons and sums the rest into an other count", () => {
+    const declined = Array.from({ length: 10 }, (_, index) =>
+      application({
+        id: `dr-${index}`,
+        opportunity_id: "opp-1",
+        status: "declined",
+        current_stage: "declined",
+        outcome: "declined",
+        decline_reason: `Reason ${index + 1}`,
+        applied_at: "2024-06-05T12:00:00.000Z",
+      })
+    );
+    const { declineReasons, declineOther } = insights(insightsInput({ applications: declined }));
+
+    expect(declineReasons).toHaveLength(8);
+    expect(declineOther).toBe(2);
+    expect(declineReasons.reduce((sum, row) => sum + row.count, 0) + declineOther).toBe(10);
   });
 
   it("reports interview results by normalised stage, in range by scheduled date", () => {
