@@ -1,14 +1,45 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getPublicEnv } from "@/lib/env";
+import { EnvConfigError, getPublicEnv } from "@/lib/env";
 import { buildContentSecurityPolicy, createNonce } from "@/lib/csp";
+import { SECURITY_HEADERS } from "@/lib/security-headers";
 import { updateSession } from "@/lib/supabase/session";
+
+/**
+ * Shown when required environment variables are missing or invalid. Plain text, no detail about
+ * which variable: the name is in the server log, not in the response.
+ */
+const NOT_CONFIGURED_BODY = "The app is not configured yet.";
+
+function notConfiguredResponse(request: NextRequest, nonce: string): NextResponse {
+  const csp = buildContentSecurityPolicy({
+    nonce,
+    development: process.env.NODE_ENV === "development",
+    upgradeInsecureRequests: request.nextUrl.protocol === "https:",
+  });
+  const response = new NextResponse(NOT_CONFIGURED_BODY, {
+    status: 503,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+  for (const { key, value } of SECURITY_HEADERS) response.headers.set(key, value);
+  response.headers.set("Content-Security-Policy", csp);
+  return response;
+}
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const nonce = createNonce();
-  const { NEXT_PUBLIC_SUPABASE_URL } = getPublicEnv();
+  let supabaseUrl: string;
+  try {
+    supabaseUrl = getPublicEnv().NEXT_PUBLIC_SUPABASE_URL;
+  } catch (error) {
+    if (error instanceof EnvConfigError) {
+      console.error(`proxy: ${error.message}`);
+      return notConfiguredResponse(request, nonce);
+    }
+    throw error;
+  }
   const csp = buildContentSecurityPolicy({
     nonce,
-    supabaseUrl: NEXT_PUBLIC_SUPABASE_URL,
+    supabaseUrl,
     development: process.env.NODE_ENV === "development",
     upgradeInsecureRequests: request.nextUrl.protocol === "https:",
   });

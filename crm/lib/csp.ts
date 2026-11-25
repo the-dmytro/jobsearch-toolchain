@@ -5,8 +5,11 @@ export function createNonce(): string {
 
 export type CspOptions = {
   nonce: string;
-  /** Supabase project URL. Only its origin (scheme, host, port) is used. */
-  supabaseUrl: string;
+  /**
+   * Supabase project URL. Only its origin (scheme, host, port) is used. Omit it when no project is
+   * configured: the policy then allows no Supabase origin.
+   */
+  supabaseUrl?: string;
   /** Adds 'unsafe-eval' (React development tooling). Never in production. */
   development: boolean;
   /** Adds upgrade-insecure-requests. Set only when the request itself is https. */
@@ -28,7 +31,7 @@ export function buildContentSecurityPolicy({
   development,
   upgradeInsecureRequests,
 }: CspOptions): string {
-  const supabaseOrigin = new URL(supabaseUrl).origin;
+  const supabaseOrigins = supabaseUrl ? [new URL(supabaseUrl).origin] : [];
   const scriptSrc = [
     "'self'",
     `'nonce-${nonce}'`,
@@ -40,9 +43,9 @@ export function buildContentSecurityPolicy({
     "default-src 'self'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: ${supabaseOrigin}`,
+    ["img-src 'self' data: blob:", ...supabaseOrigins].join(" "),
     "font-src 'self' data:",
-    `connect-src 'self' ${supabaseOrigin} ${toWebSocketOrigin(supabaseOrigin)}`,
+    ["connect-src 'self'", ...supabaseOrigins.flatMap((o) => [o, toWebSocketOrigin(o)])].join(" "),
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

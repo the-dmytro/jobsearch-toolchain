@@ -39,6 +39,8 @@ export async function updateSession(
   const originalCookieHeader = request.headers.get("cookie") ?? "";
   const refreshed = new Map<string, string>();
   const responseCookies: CookieToSet[] = [];
+  // Cache headers from @supabase/ssr (Cache-Control, Expires, Pragma) for auth cookie writes.
+  const responseHeaders: Record<string, string> = {};
   let supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } });
 
   const supabase = createServerClient(
@@ -49,7 +51,8 @@ export async function updateSession(
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet, headers) {
+          Object.assign(responseHeaders, headers);
           cookiesToSet.forEach(({ name, value, options }) => {
             request.cookies.set(name, value);
             refreshed.set(name, value);
@@ -69,10 +72,14 @@ export async function updateSession(
     }
   );
 
-  // Applies every cookie refreshed so far to a response (latest value wins per name).
-  function withSessionCookies<T extends NextResponse>(response: T): T {
+  // Applies every cookie refreshed so far, and the cache headers that came with them, to a
+  // response. The latest value wins per name. Used for every response this function returns.
+  function withSessionResponse<T extends NextResponse>(response: T): T {
     for (const { name, value, options } of responseCookies) {
       response.cookies.set(name, value, options);
+    }
+    for (const [key, value] of Object.entries(responseHeaders)) {
+      response.headers.set(key, value);
     }
     return response;
   }
@@ -89,7 +96,7 @@ export async function updateSession(
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", path);
-    return withSessionCookies(NextResponse.redirect(url));
+    return withSessionResponse(NextResponse.redirect(url));
   }
 
   if (user && !isAllowedOwnerEmail(user.email)) {
@@ -97,15 +104,15 @@ export async function updateSession(
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("error", "forbidden");
-    return withSessionCookies(NextResponse.redirect(url));
+    return withSessionResponse(NextResponse.redirect(url));
   }
 
   if (user && isLogin) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     url.search = "";
-    return withSessionCookies(NextResponse.redirect(url));
+    return withSessionResponse(NextResponse.redirect(url));
   }
 
-  return withSessionCookies(supabaseResponse);
+  return withSessionResponse(supabaseResponse);
 }

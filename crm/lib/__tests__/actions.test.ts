@@ -303,6 +303,40 @@ describe("updateApplication", () => {
 
     await expect(updateApplication({ id: APPLICATION_ID, notes: "hello" })).resolves.toEqual({ ok: true });
   });
+
+  it.each([
+    ["current_stage", { current_stage: "onsite" }],
+    ["status", { status: "offer" }],
+    ["outcome", { outcome: "rejected" }],
+  ])("rejects a %s key before touching the database", async (_name, extra) => {
+    const fake = fakeServerClient({});
+    createClient.mockResolvedValue(fake.client);
+
+    const result = await updateApplication({ id: APPLICATION_ID, notes: "hello", ...extra });
+
+    expect(result.ok).toBe(false);
+    expect(createClient).not.toHaveBeenCalled();
+    expect(fake.recorded).toHaveLength(0);
+  });
+
+  it("writes only the keys it was sent", async () => {
+    const fake = fakeServerClient({});
+    createClient.mockResolvedValue(fake.client);
+
+    await updateApplication({ id: APPLICATION_ID, salary_requested_text: "80k" });
+
+    expect(fake.recorded).toEqual([
+      { table: "applications", op: "update", payload: { salary_requested_text: "80k" }, filters: [["id", "eq", APPLICATION_ID]] },
+    ]);
+  });
+
+  it("succeeds without a write when the payload has no editable fields", async () => {
+    const fake = fakeServerClient({});
+    createClient.mockResolvedValue(fake.client);
+
+    await expect(updateApplication({ id: APPLICATION_ID })).resolves.toEqual({ ok: true });
+    expect(fake.recorded).toHaveLength(0);
+  });
 });
 
 describe("createContact", () => {

@@ -343,6 +343,77 @@ describe("computeDashboardBundle KPIs", () => {
   });
 });
 
+describe("computeDashboardBundle open applications over time", () => {
+  /** Local noon on a day of May 2024, so the day boundaries match the code under test. */
+  const may = (day: number) => new Date(2024, 4, day, 12).toISOString();
+
+  // Applied, closed on May 5, reopened on May 12, closed again on May 25.
+  const input = dashboardInput({
+    applications: [
+      application({
+        id: "app-cycle",
+        status: "rejected",
+        current_stage: "rejected",
+        outcome: "rejected",
+        applied_at: "2024-04-01",
+      }),
+    ],
+    events: [
+      event({
+        id: "close-1",
+        application_id: "app-cycle",
+        event_type: "stage_change",
+        event_at: may(5),
+        metadata: { to_stage: "rejected" },
+      }),
+      event({
+        id: "reopen",
+        application_id: "app-cycle",
+        event_type: "stage_change",
+        event_at: may(12),
+        metadata: { to_stage: "screening" },
+      }),
+      event({
+        id: "close-2",
+        application_id: "app-cycle",
+        event_type: "stage_change",
+        event_at: may(25),
+        metadata: { to_stage: "rejected" },
+      }),
+    ],
+    interviews: [],
+    opportunities: [],
+    evaluations: [],
+    communications: [],
+    runCount: 0,
+  });
+
+  /** Open applications at the end of May `day`, read from the previous period of a 30-day range. */
+  function openAtEndOfMay(day: number): number {
+    const range: DateBounds = {
+      start: new Date(2024, 4, day + 1),
+      end: new Date(2024, 4, day + 30),
+    };
+    return computeDashboardBundle(input, range, NOW).kpis.openApplicationsPrev;
+  }
+
+  it.each([
+    [3, 1, "open before the first close"],
+    [6, 0, "closed after the first close"],
+    [12, 1, "open on the day it was reopened"],
+    [20, 1, "open after the reopening"],
+    [25, 0, "closed again after the second close"],
+    [31, 0, "still closed at the end of the month"],
+  ])("on May %i the application is counted %i (%s)", (day, expected) => {
+    expect(openAtEndOfMay(day)).toBe(expected);
+  });
+
+  it("is closed now after the final close", () => {
+    const { kpis } = computeDashboardBundle(input, RANGE, NOW);
+    expect(kpis.openApplications).toBe(0);
+  });
+});
+
 describe("computeDashboardBundle last activity", () => {
   it("uses the latest activity that is not in the future, not updated_at", () => {
     const { pipelineAging } = dashboard();

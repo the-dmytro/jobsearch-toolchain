@@ -56,6 +56,16 @@ describe("buildContentSecurityPolicy", () => {
     expect(csp).not.toContain("/rest/v1");
   });
 
+  it("allows no Supabase origin when no project URL is configured", () => {
+    const csp = buildContentSecurityPolicy({
+      nonce: "abc123",
+      development: false,
+      upgradeInsecureRequests: false,
+    });
+    expect(directive(csp, "img-src")).toBe("img-src 'self' data: blob:");
+    expect(directive(csp, "connect-src")).toBe("connect-src 'self'");
+  });
+
   it("allows the Supabase origin for images and websocket connections", () => {
     const csp = base({ supabaseUrl: `${SUPABASE}/` });
     expect(directive(csp, "img-src")).toBe(`img-src 'self' data: blob: ${SUPABASE}`);

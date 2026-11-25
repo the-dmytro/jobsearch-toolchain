@@ -15,6 +15,7 @@ import {
   type DateRangePreset,
   useDateRange,
 } from "@/lib/date-range-context";
+import { useHydrated } from "@/lib/use-hydrated";
 
 const PRESETS: { label: string; value: Exclude<DateRangePreset, "custom"> }[] = [
   { label: "7 days", value: "7d" },
@@ -37,7 +38,12 @@ export function DateRangePicker() {
     from: value.range.start,
     to: value.range.end,
   };
-  const rangeLabel = `${format(value.range.start, "MMM d")} – ${format(value.range.end, "MMM d, yyyy")}`;
+  // The label depends on today's date in the viewer's time zone, which the server cannot know.
+  // It renders only after mount, so the server markup and the first client render match.
+  const hydrated = useHydrated();
+  const rangeLabel = hydrated
+    ? `${format(value.range.start, "MMM d")} – ${format(value.range.end, "MMM d, yyyy")}`
+    : "Choose dates";
 
   return (
     <div className="flex items-center gap-1">

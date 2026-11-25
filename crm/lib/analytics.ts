@@ -475,10 +475,14 @@ type AppFact = {
   /** Whole days since the last activity, in the past. */
   daysSinceActivity: number;
   /**
-   * When the application closed, from its first closing event. For an application closed with no
-   * dated signal this is the applied date, so it is not open in any earlier period. Null while open.
+   * When the application last closed, from its latest closing event. Null while open. For an
+   * application closed with no dated signal this is the applied date.
    */
   closedAt: number | null;
+  /** Dated closing events, oldest first. An application closed with no dated signal has its applied date here. */
+  closingTimes: number[];
+  /** Dated stage changes to an open stage (a reopening), oldest first. */
+  reopeningTimes: number[];
   /** Any response evidence: a reply, an invitation, an inbound message, an interview or a rejection. */
   responded: boolean;
   /** Earliest dated response evidence, or null. */
@@ -522,6 +526,7 @@ function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
 
     let reachedIndex = pipelineRank(state.stage);
     const closingTimes: number[] = [];
+    const reopeningTimes: number[] = [];
     const responseTimes: number[] = [];
     let responded = false;
 
@@ -532,7 +537,10 @@ function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
         // closes the application, and they are not employer responses.
         const target = readStage(stageFromEvent(event));
         reachedIndex = Math.max(reachedIndex, pipelineRank(target.stage));
-        if (target.closed && time !== null) closingTimes.push(time);
+        if (time !== null) {
+          if (target.closed) closingTimes.push(time);
+          else if (target.stage) reopeningTimes.push(time);
+        }
         continue;
       }
       const evidence = eventEvidence(event.event_type);
@@ -562,7 +570,11 @@ function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
     if (!state.open && state.outcome === "rejected") responded = true;
 
     closingTimes.sort((a, b) => a - b);
-    const closedAt = state.open ? null : (closingTimes[0] ?? appliedAt);
+    reopeningTimes.sort((a, b) => a - b);
+    // Closed with no dated closing signal: treat the applied date as the close, so it is not open
+    // in any period that starts after it.
+    if (!state.open && closingTimes.length === 0 && appliedAt !== null) closingTimes.push(appliedAt);
+    const closedAt = state.open ? null : (closingTimes[closingTimes.length - 1] ?? null);
 
     const days = daysSince(lastActivityMs(app, latest, nowMs), nowMs) ?? 0;
 
@@ -579,6 +591,8 @@ function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
       open: state.open,
       daysSinceActivity: days,
       closedAt,
+      closingTimes,
+      reopeningTimes,
       responded,
       responseAt: responseTimes.length > 0 ? Math.min(...responseTimes) : null,
       reachedIndex: Math.max(0, reachedIndex),
@@ -586,10 +600,27 @@ function buildAppFacts(input: FactInput, nowMs: number): AppFact[] {
   });
 }
 
-/** An application was open at time `t` if it had been applied for and had not yet closed. */
+/** Latest value in an ascending list that is at or before `t`, or null. */
+function lastAtOrBefore(sortedTimes: readonly number[], t: number): number | null {
+  let found: number | null = null;
+  for (const time of sortedTimes) {
+    if (time > t) break;
+    found = time;
+  }
+  return found;
+}
+
+/**
+ * An application was open at time `t` if it had been applied for by then and was not closed at
+ * `t`. It is closed at `t` when the last closing event at or before `t` has no reopening after it
+ * (a stage change to an open stage) at or before `t`. A reopening at the same instant does not count.
+ */
 function openAt(fact: AppFact, t: number): boolean {
   if (fact.appliedAt === null || fact.appliedAt > t) return false;
-  return fact.closedAt === null || fact.closedAt > t;
+  const lastClose = lastAtOrBefore(fact.closingTimes, t);
+  if (lastClose === null) return true;
+  const lastReopen = lastAtOrBefore(fact.reopeningTimes, t);
+  return lastReopen !== null && lastReopen > lastClose;
 }
 
 /* ------------------------------------------------------------------ */

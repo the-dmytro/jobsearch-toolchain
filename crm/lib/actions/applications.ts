@@ -20,12 +20,17 @@ function revalidateApplication(applicationId: string) {
   revalidatePath("/");
 }
 
+/**
+ * Saves the editable, non-stage fields. The payload is partial: only the keys present are
+ * written. Stage, status and outcome are refused by the schema; use `changeApplicationStage`.
+ */
 export async function updateApplication(input: unknown): Promise<ActionResult> {
   const parsed = applicationUpdateSchema.safeParse(input);
   if (!parsed.success) return invalidInput(parsed.error);
   try {
-    const supabase = await createClient();
     const { id, ...patch } = parsed.data;
+    if (Object.keys(patch).length === 0) return { ok: true };
+    const supabase = await createClient();
     const { error } = await supabase.from("applications").update(patch).eq("id", id);
     if (error) {
       logActionError("updateApplication: update failed", error);

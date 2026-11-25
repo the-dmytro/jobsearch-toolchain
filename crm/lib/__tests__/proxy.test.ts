@@ -40,6 +40,31 @@ describe("proxy", () => {
     mocks.signOut.mockResolvedValue(undefined);
   });
 
+  it("answers 503 with plain text, the CSP and the security headers when the environment is not configured", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await proxy(request("/applications"));
+
+    expect(res.status).toBe(503);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe("The app is not configured yet.");
+    expect(res.headers.get("content-security-policy")).toContain("script-src 'self' 'nonce-");
+    expect(res.headers.get("content-security-policy")).not.toContain("supabase.co");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("strict-transport-security")).toContain("max-age=");
+    expect(mocks.getUser).not.toHaveBeenCalled();
+  });
+
+  it("names the missing variable only in the server log, not in the response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await proxy(request("/applications"));
+
+    expect(await res.text()).not.toContain("NEXT_PUBLIC_SUPABASE_URL");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("NEXT_PUBLIC_SUPABASE_URL"));
+  });
+
   it("applies the CSP header with the same nonce as the forwarded x-nonce header", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: OWNER } });
     const res = await proxy(request("/applications"));
