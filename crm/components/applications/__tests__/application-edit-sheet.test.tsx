@@ -102,9 +102,11 @@ describe("ApplicationEditSheet", () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderSheet(application());
 
-    const notes = screen.getByLabelText("Notes");
-    await user.clear(notes);
-    await user.type(notes, "New notes");
+    await screen.findByRole("dialog");
+    const notes = () => screen.getByLabelText("Notes");
+    await user.clear(notes());
+    await user.type(notes(), "New notes");
+    await waitFor(() => expect(notes()).toHaveValue("New notes"));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(actions.updateApplication).toHaveBeenCalledTimes(1));
@@ -169,5 +171,30 @@ describe("ApplicationEditSheet", () => {
     expect(screen.queryByLabelText("Status")).toBeNull();
     expect(screen.queryByLabelText("Outcome")).toBeNull();
     expect(screen.getByText("Rejected")).toBeInTheDocument();
+  });
+});
+
+describe("ApplicationEditSheet typing safety", () => {
+  it("keeps typed text when the parent re-renders with an equal record", async () => {
+    actions.updateApplication.mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const tree = (app: Tables<"applications">) => (
+      <QueryClientProvider client={client}>
+        <ApplicationEditSheet application={app} open onOpenChange={vi.fn()} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(application()));
+    await screen.findByRole("dialog");
+    const notes = () => screen.getByLabelText("Notes");
+    await user.clear(notes());
+    await user.type(notes(), "Draft");
+    await waitFor(() => expect(notes()).toHaveValue("Draft"));
+    rerender(tree(application()));
+    await user.type(notes(), " text");
+    await waitFor(() => expect(notes()).toHaveValue("Draft text"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(actions.updateApplication).toHaveBeenCalledTimes(1));
+    expect(actions.updateApplication.mock.calls[0][0]).toEqual({ id: APP_ID, notes: "Draft text" });
   });
 });

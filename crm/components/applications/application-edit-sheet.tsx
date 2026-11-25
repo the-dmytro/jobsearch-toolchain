@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -85,8 +85,10 @@ export function ApplicationEditSheet({
   onOpenChange: (o: boolean) => void;
 }) {
   const qc = useQueryClient();
-  // Memoized: react-hook-form resets the form whenever the `values` object changes identity, so an
-  // inline object would wipe what the user is typing on every render.
+  // The form starts from the saved record and is reset only when the record itself changes
+  // (another id, or a newer updated_at) and the user has no unsaved edits. A refetch that
+  // returns an equal record, or any re-render, never wipes what the user is typing.
+  const recordKey = `${application.id}:${application.updated_at ?? ""}`;
   const saved = useMemo<FormValues>(
     () => ({
       id: application.id,
@@ -95,13 +97,21 @@ export function ApplicationEditSheet({
       decline_reason: application.decline_reason,
       salary_requested_text: application.salary_requested_text,
     }),
-    [application]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on record identity on purpose
+    [recordKey]
   );
   const form = useForm<FormValues>({
     resolver: zodResolver(applicationUpdateSchema),
-    values: saved,
+    defaultValues: saved,
   });
   const { dirtyFields } = form.formState;
+  const lastSyncedKey = useRef(recordKey);
+  useEffect(() => {
+    if (lastSyncedKey.current === recordKey) return;
+    if (form.formState.isDirty) return;
+    lastSyncedKey.current = recordKey;
+    form.reset(saved);
+  }, [recordKey, saved, form]);
 
   // Saves the changed non-stage fields only. Nothing is sent when no field changed.
   const saveMutation = useMutation({
