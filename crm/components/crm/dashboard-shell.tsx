@@ -34,7 +34,7 @@ const LABELS: Record<string, string> = {
   settings: "Settings",
 };
 
-function breadcrumbSegments(pathname: string) {
+export function breadcrumbSegments(pathname: string) {
   if (pathname === "/") {
     return [{ href: "/", label: "Dashboard" }];
   }
@@ -42,7 +42,8 @@ function breadcrumbSegments(pathname: string) {
   const parts = pathname.split("/").filter(Boolean);
   return parts.map((part, index) => {
     const href = `/${parts.slice(0, index + 1).join("/")}`;
-    const label = LABELS[part] ?? part.replace(/-/g, " ");
+    // A segment under a known section is a record id (a UUID): show "Details", not the id.
+    const label = LABELS[part] ?? (index > 0 && LABELS[parts[0]] ? "Details" : part.replace(/-/g, " "));
     return { href, label };
   });
 }
