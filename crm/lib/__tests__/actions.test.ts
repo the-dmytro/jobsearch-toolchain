@@ -13,51 +13,58 @@ import { createContact } from "@/lib/actions/contacts";
 
 const APPLICATION_ID = "11111111-1111-4111-8111-111111111111";
 
+type Previous = { current_stage: string | null; status: string; outcome: string | null };
+
 type FakeConfig = {
-  previous?: { current_stage: string | null; status: string };
+  previous?: Previous;
   readError?: string;
+  /** Error for the first stage write. */
   updateError?: string;
+  /** Error for the revert write. */
   revertError?: string;
   eventError?: string;
+  /** Rows the first (compare-and-set) stage write matches. Defaults to 1. */
+  changedRows?: number;
+  /** Rows the revert matches. Defaults to 1. */
+  revertRows?: number;
 };
 
 type Recorded = {
   table: string;
-  op: "select" | "update" | "insert";
+  op: "update" | "insert";
   payload?: Record<string, unknown>;
+  filters?: Array<[string, "eq" | "is", unknown]>;
 };
 
 /**
- * A minimal chainable stand-in for the Supabase client. Each awaited chain is recorded so
- * tests can check what was written and in which order.
+ * A minimal chainable stand-in for the Supabase client. Writes are recorded with the filters they
+ * were guarded by, so tests can check the compare-and-set conditions as well as the values.
  */
 function fakeServerClient(config: FakeConfig) {
   const recorded: Recorded[] = [];
   let applicationUpdates = 0;
 
   const from = (table: string) => {
-    let op: Recorded["op"] = "select";
+    let op: "select" | "update" | "insert" = "select";
     let payload: Record<string, unknown> | undefined;
+    const filters: Array<[string, "eq" | "is", unknown]> = [];
 
     const execute = () => {
       if (op === "select") {
         if (config.readError) return { data: null, error: { message: config.readError } };
         return { data: config.previous ?? null, error: null };
       }
-      recorded.push({ table, op, payload });
       if (op === "update" && table === "applications") {
         applicationUpdates += 1;
-        if (applicationUpdates === 1 && config.updateError) {
-          return { data: null, error: { message: config.updateError } };
-        }
-        if (applicationUpdates === 2 && config.revertError) {
-          return { data: null, error: { message: config.revertError } };
-        }
-        return { data: null, error: null };
+        recorded.push({ table, op, payload, filters: [...filters] });
+        const isRevert = applicationUpdates > 1;
+        if (isRevert && config.revertError) return { data: null, error: { message: config.revertError } };
+        if (!isRevert && config.updateError) return { data: null, error: { message: config.updateError } };
+        const rows = isRevert ? (config.revertRows ?? 1) : (config.changedRows ?? 1);
+        return { data: Array.from({ length: rows }, () => ({ id: APPLICATION_ID })), error: null };
       }
-      if (op === "insert" && config.eventError) {
-        return { data: null, error: { message: config.eventError } };
-      }
+      recorded.push({ table, op: "insert", payload });
+      if (config.eventError) return { data: null, error: { message: config.eventError } };
       return { data: null, error: null };
     };
 
@@ -65,7 +72,12 @@ function fakeServerClient(config: FakeConfig) {
       select() {
         return builder;
       },
-      eq() {
+      eq(column: string, value: unknown) {
+        filters.push([column, "eq", value]);
+        return builder;
+      },
+      is(column: string, value: unknown) {
+        filters.push([column, "is", value]);
         return builder;
       },
       single() {
@@ -91,7 +103,13 @@ function fakeServerClient(config: FakeConfig) {
   return { client: { from }, recorded };
 }
 
-const PREVIOUS = { current_stage: "screening", status: "active" };
+const PREVIOUS: Previous = { current_stage: "screening", status: "interviewing", outcome: null };
+const CLOSED_PREVIOUS: Previous = {
+  current_stage: "Rejected after screen",
+  status: "rejected",
+  outcome: "rejected",
+};
+const CHANGED_ELSEWHERE = "This application changed elsewhere. Refresh and try again.";
 
 beforeEach(() => {
   createClient.mockReset();
@@ -103,7 +121,7 @@ afterEach(() => {
 });
 
 describe("changeApplicationStage", () => {
-  it("moves the stage and records a stage_change event with from and to stages", async () => {
+  it("moves the stage, with its status and outcome, and records a stage_change event", async () => {
     const fake = fakeServerClient({ previous: PREVIOUS });
     createClient.mockResolvedValue(fake.client);
 
@@ -114,7 +132,8 @@ describe("changeApplicationStage", () => {
       ["applications", "update"],
       ["application_events", "insert"],
     ]);
-    expect(fake.recorded[0].payload).toEqual({ current_stage: "onsite" });
+    expect(fake.recorded[0].payload).toEqual({ current_stage: "onsite", status: "interviewing", outcome: null });
+    expect(fake.recorded[0].filters).toContainEqual(["current_stage", "eq", "screening"]);
     expect(fake.recorded[1].payload).toMatchObject({
       event_type: "stage_change",
       title: "Stage → onsite",
@@ -123,9 +142,49 @@ describe("changeApplicationStage", () => {
     expect(revalidatePath).toHaveBeenCalledWith(`/applications/${APPLICATION_ID}`);
   });
 
-  it("restores the previous stage and status when the event cannot be recorded", async () => {
+  it("clears the rejection when an application leaves Closed", async () => {
+    const fake = fakeServerClient({ previous: CLOSED_PREVIOUS });
+    createClient.mockResolvedValue(fake.client);
+
+    const result = await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "screening" });
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.recorded[0].payload).toEqual({ current_stage: "screening", status: "interviewing", outcome: null });
+    expect(fake.recorded[0].filters).toContainEqual(["current_stage", "eq", "Rejected after screen"]);
+  });
+
+  it("writes the rejection with status and outcome when the column is Closed", async () => {
+    const fake = fakeServerClient({ previous: PREVIOUS });
+    createClient.mockResolvedValue(fake.client);
+
+    await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "rejected" });
+
+    expect(fake.recorded[0].payload).toEqual({ current_stage: "rejected", status: "rejected", outcome: "rejected" });
+    expect(fake.recorded[1].payload).toMatchObject({ metadata: { to_stage: "rejected" } });
+  });
+
+  it("guards a null stage with an IS NULL condition", async () => {
+    const fake = fakeServerClient({ previous: { current_stage: null, status: "applied", outcome: null } });
+    createClient.mockResolvedValue(fake.client);
+
+    await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "applied" });
+
+    expect(fake.recorded[0].filters).toContainEqual(["current_stage", "is", null]);
+  });
+
+  it("reports a change elsewhere, and records no event, when the compare-and-set matches no row", async () => {
+    const fake = fakeServerClient({ previous: PREVIOUS, changedRows: 0 });
+    createClient.mockResolvedValue(fake.client);
+
+    const result = await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "onsite" });
+
+    expect(result).toEqual({ ok: false, message: CHANGED_ELSEWHERE });
+    expect(fake.recorded.map((r) => r.table)).toEqual(["applications"]);
+  });
+
+  it("restores the previous stage, status and outcome under the same condition when the event cannot be recorded", async () => {
     const fake = fakeServerClient({
-      previous: PREVIOUS,
+      previous: CLOSED_PREVIOUS,
       eventError: 'insert rejected: relation "application_events" permission denied',
     });
     createClient.mockResolvedValue(fake.client);
@@ -139,7 +198,12 @@ describe("changeApplicationStage", () => {
     });
     const updates = fake.recorded.filter((r) => r.op === "update");
     expect(updates).toHaveLength(2);
-    expect(updates[1].payload).toEqual({ current_stage: "screening", status: "active" });
+    expect(updates[1].payload).toEqual({
+      current_stage: "Rejected after screen",
+      status: "rejected",
+      outcome: "rejected",
+    });
+    expect(updates[1].filters).toContainEqual(["current_stage", "eq", "onsite"]);
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("permission denied"));
   });
 
@@ -172,7 +236,17 @@ describe("changeApplicationStage", () => {
     expect(result).toMatchObject({ message: expect.stringContaining("Refresh and check the stage") });
   });
 
-  it("stops before writing when the stage update fails", async () => {
+  it("says so when the revert matches no row, because the stage changed again meanwhile", async () => {
+    const fake = fakeServerClient({ previous: PREVIOUS, eventError: "insert failed", revertRows: 0 });
+    createClient.mockResolvedValue(fake.client);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "onsite" });
+
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("Refresh and check the stage") });
+  });
+
+  it("stops before writing an event when the stage update fails", async () => {
     const fake = fakeServerClient({ previous: PREVIOUS, updateError: "row locked" });
     createClient.mockResolvedValue(fake.client);
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -192,6 +266,15 @@ describe("changeApplicationStage", () => {
 
     expect(result).toEqual({ ok: false, message: "Could not find this application." });
     expect(fake.recorded).toHaveLength(0);
+  });
+
+  it("rejects a stage outside the board vocabulary before touching the database", async () => {
+    createClient.mockResolvedValue(fakeServerClient({}).client);
+
+    const result = await changeApplicationStage({ applicationId: APPLICATION_ID, newStage: "declined" });
+
+    expect(result).toEqual({ ok: false, message: "Check newStage and try again." });
+    expect(createClient).not.toHaveBeenCalled();
   });
 
   it("rejects invalid input before touching the database", async () => {

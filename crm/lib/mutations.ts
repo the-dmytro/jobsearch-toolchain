@@ -8,8 +8,8 @@ export type MutationScope = {
 };
 
 /**
- * Invalidates every cached query a write to applications, interviews, communications or
- * contacts can change: the dashboard and insights bundles included.
+ * Invalidates every cached query a write to applications, interviews, communications, contacts,
+ * opportunities or organizations can change, including the shared analytics read.
  */
 export function invalidateAfterMutation(
   queryClient: QueryClient,
@@ -21,8 +21,9 @@ export function invalidateAfterMutation(
     qk.interviews,
     qk.communications,
     qk.contacts,
-    qk.dashboardAll,
-    qk.insightsAll,
+    qk.opportunities,
+    qk.organizations,
+    qk.analyticsRaw,
   ];
   return Promise.all(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey }))).then(
     () => undefined

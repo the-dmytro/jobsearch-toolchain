@@ -37,8 +37,8 @@ export function ContactsPage() {
     queryKey: qk.contacts,
     queryFn: async () => {
       const supabase = createClient();
-      return fetchAll<ContactListRow>((from, to) =>
-        supabase
+      return fetchAll<ContactListRow>((after, limit) => {
+        let query = supabase
           .from("contacts")
           .select(
             `
@@ -47,7 +47,10 @@ export function ContactsPage() {
           `
           )
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
     },
   });
@@ -56,8 +59,11 @@ export function ContactsPage() {
     queryKey: [...qk.organizations, "pick"],
     queryFn: async () => {
       const supabase = createClient();
-      const rows = await fetchAll<{ id: string; name: string }>((from, to) =>
-        supabase.from("organizations").select("id, name").order("id").range(from, to)
+      const rows = await fetchAll<{ id: string; name: string }>((after, limit) => {
+        let query = supabase.from("organizations").select("id, name").order("id").limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
       return rows.sort((a, b) => a.name.localeCompare(b.name, "en-GB"));
     },

@@ -82,14 +82,14 @@ const columns = columnHelper.columns([
     sortUndefined: "last",
     cell: ({ row }) => <DateCell ms={row.original.appliedMs} />,
   }),
-  columnHelper.accessor((row) => row.daysInStage ?? undefined, {
+  columnHelper.accessor((row) => row.daysSinceActivity ?? undefined, {
     id: "days",
     header: SORT_LABELS.days,
     sortFn: "basic",
     sortUndefined: "last",
     cell: ({ row }) => (
       <span className={cn("tabular-nums", row.original.stalled && "font-medium text-warning")}>
-        {formatDuration(row.original.daysInStage)}
+        {formatDuration(row.original.daysSinceActivity)}
         {row.original.stalled ? <span className="ml-1 text-xs">· Stalled</span> : null}
       </span>
     ),

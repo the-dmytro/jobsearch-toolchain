@@ -1,29 +1,31 @@
 /**
- * Pure list logic for the applications screens: URL state, filters, row
- * decoration (role, company, days in stage) and the optimistic stage helpers.
- * Nothing here touches React or the network, so it is covered by unit tests.
+ * Pure list logic for the applications screens: URL state, filters, row decoration (role,
+ * company, column, last activity and the stalled flag) and the optimistic stage helpers. The
+ * stage rules, last activity and the stalled threshold come from lib/stages and lib/activity,
+ * the same modules the dashboard uses. Nothing here touches React or the network.
  */
 import {
-  applicationOutcome,
-  isOpenOutcome,
-  isStageChangeEvent,
-  isTerminal,
-  normalizeStage,
+  daysSince,
+  isStalled,
+  lastActivityMs,
+  latestActivityByApplication,
+  STALLED_DAYS,
+} from "@/lib/activity";
+import {
+  classifyApplication,
+  statusAndOutcomeForStage,
+  type ApplicationStageState,
   type StageOutcome,
 } from "@/lib/stages";
 
 import type {
   ApplicationWithJoins,
   ApplicationsBundle,
-  StageEventRow,
 } from "./use-applications-query";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+export { STALLED_DAYS };
 
-/** An application open longer than this is listed as stalled. Matches the dashboard rule. */
-export const STALLED_DAYS = 14;
-
-/** Board and stage-filter columns. Every terminal stage (declined, withdrawn, ghosted) is "closed". */
+/** Board and stage-filter columns. Every closing outcome is shown in the Closed column. */
 export const BOARD_COLUMNS = [
   "applied",
   "screening",
@@ -43,13 +45,13 @@ export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   closed: "Closed",
 };
 
-export const OUTCOME_FILTERS = ["active", "offer", "declined", "withdrawn", "ghosted"] as const;
+export const OUTCOME_FILTERS = ["active", "offer", "rejected", "withdrawn", "ghosted"] as const;
 export type OutcomeFilter = (typeof OUTCOME_FILTERS)[number];
 
 export const OUTCOME_LABELS: Record<OutcomeFilter, string> = {
   active: "Active",
   offer: "Offer",
-  declined: "Declined",
+  rejected: "Rejected",
   withdrawn: "Withdrawn",
   ghosted: "Ghosted",
 };
@@ -68,7 +70,7 @@ export const SORT_LABELS: Record<SortId, string> = {
   role: "Role",
   stage: "Stage",
   applied: "Applied",
-  days: "Days in stage",
+  days: "Last activity",
   updated: "Updated",
 };
 
@@ -109,9 +111,12 @@ function isOneOf<T extends string>(values: readonly T[], value: string | null): 
   return value !== null && (values as readonly string[]).includes(value);
 }
 
+/** Older links used "declined" for the same outcome. */
+const LEGACY_OUTCOMES: Readonly<Record<string, OutcomeFilter>> = { declined: "rejected" };
+
 /**
- * Reads the list state from the URL. Unknown or malformed values fall back to
- * the defaults, so a hand-edited URL never breaks the screen.
+ * Reads the list state from the URL. Unknown or malformed values fall back to the defaults, so a
+ * hand-edited URL never breaks the screen.
  */
 export function parseListState(params: SearchParamsLike): ListState {
   const stages = Array.from(new Set(params.getAll("stage"))).filter((value): value is BoardColumn =>
@@ -129,12 +134,17 @@ export function parseListState(params: SearchParamsLike): ListState {
     : DEFAULT_PAGE_SIZE;
 
   const outcomeParam = params.get("outcome");
+  const outcome = isOneOf(OUTCOME_FILTERS, outcomeParam)
+    ? outcomeParam
+    : outcomeParam !== null && LEGACY_OUTCOMES[outcomeParam]
+      ? LEGACY_OUTCOMES[outcomeParam]
+      : null;
   const company = params.get("company")?.trim() ?? "";
 
   return {
     q: params.get("q") ?? "",
     stages,
-    outcome: isOneOf(OUTCOME_FILTERS, outcomeParam) ? outcomeParam : null,
+    outcome,
     company: company === "" ? null : company,
     stalled: params.get("stalled") === "1",
     sort,
@@ -183,8 +193,8 @@ export type ApplicationRow = ApplicationWithJoins & {
   outcome: StageOutcome;
   appliedMs: number | null;
   updatedMs: number | null;
-  /** Whole days since the latest stage change, or since applying when there is none. */
-  daysInStage: number | null;
+  /** Whole days since the last activity (see lib/activity), or null when nothing dated is known. */
+  daysSinceActivity: number | null;
   stalled: boolean;
 };
 
@@ -194,45 +204,36 @@ function toMs(value: string | null | undefined): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
-export function boardColumnFor(stage: string | null | undefined): BoardColumn {
-  const normalized = normalizeStage(stage);
-  return isTerminal(normalized) ? "closed" : (normalized as BoardColumn);
+/** Board column for an application: Closed for any closing outcome, otherwise its pipeline stage. */
+export function boardColumnFor(state: ApplicationStageState): BoardColumn {
+  return state.open ? state.stage : "closed";
 }
 
-/** Latest stage-change time per application (epoch ms). */
-export function latestStageChangeMs(events: readonly StageEventRow[]): Map<string, number> {
-  const latest = new Map<string, number>();
-  for (const event of events) {
-    if (!isStageChangeEvent(event.event_type)) continue;
-    const at = toMs(event.event_at) ?? toMs(event.created_at);
-    if (at === null) continue;
-    const previous = latest.get(event.application_id);
-    if (previous === undefined || at > previous) latest.set(event.application_id, at);
-  }
-  return latest;
-}
-
-/** Adds role, company, column, outcome and days in stage to every application. */
+/** Adds role, company, column, outcome, last activity and the stalled flag to every application. */
 export function decorateApplications(bundle: ApplicationsBundle, nowMs: number): ApplicationRow[] {
-  const lastChange = latestStageChangeMs(bundle.events);
+  const latest = latestActivityByApplication(
+    {
+      events: bundle.events,
+      communications: bundle.communications,
+      interviews: bundle.interviews,
+    },
+    nowMs
+  );
   return bundle.applications.map((app) => {
-    const appliedMs = toMs(app.applied_at) ?? toMs(app.created_at);
-    const base = lastChange.get(app.id) ?? appliedMs;
-    const daysInStage = base === null ? null : Math.max(0, Math.floor((nowMs - base) / DAY_MS));
-    const outcome = applicationOutcome(app);
-    const column = boardColumnFor(app.current_stage);
-    const open = isOpenOutcome(outcome) && !isTerminal(normalizeStage(app.current_stage));
+    const state = classifyApplication(app);
+    const days = daysSince(lastActivityMs(app, latest, nowMs), nowMs);
+    const column = boardColumnFor(state);
     return {
       ...app,
       role: app.opportunities?.title ?? "",
       company: app.organizations?.name ?? "",
       column,
       stageOrder: BOARD_COLUMNS.indexOf(column),
-      outcome,
-      appliedMs,
+      outcome: state.outcome,
+      appliedMs: toMs(app.applied_at) ?? toMs(app.created_at),
       updatedMs: toMs(app.updated_at),
-      daysInStage,
-      stalled: open && daysInStage !== null && daysInStage > STALLED_DAYS,
+      daysSinceActivity: days,
+      stalled: isStalled(state.open, days),
     };
   });
 }
@@ -270,20 +271,32 @@ export function companyOptions(rows: readonly ApplicationRow[]): { id: string; n
   );
 }
 
+/** The stage fields of one application, as the board reads and writes them. */
+export type StageSnapshot = {
+  current_stage: string | null;
+  status: string;
+  outcome: string | null;
+};
+
 /**
- * Returns a copy of the bundle with the application moved to `toStage` and a
- * stage-change event added, so days in stage restart at once.
+ * Returns a copy of the bundle with the application moved to `toStage`, with the same status and
+ * outcome the server writes, and a stage-change event added. The card and its last activity update
+ * at once.
  */
 export function applyStageChange(
   bundle: ApplicationsBundle,
   applicationId: string,
-  toStage: string,
+  toStage: Parameters<typeof statusAndOutcomeForStage>[0],
   optimisticEventId: string,
   nowIso: string
 ): ApplicationsBundle {
+  const next = statusAndOutcomeForStage(toStage);
   return {
+    ...bundle,
     applications: bundle.applications.map((app) =>
-      app.id === applicationId ? { ...app, current_stage: toStage } : app
+      app.id === applicationId
+        ? { ...app, current_stage: toStage, status: next.status, outcome: next.outcome }
+        : app
     ),
     events: [
       ...bundle.events,
@@ -300,16 +313,24 @@ export function applyStageChange(
   };
 }
 
-/** Undoes `applyStageChange` after the server refused the move. */
+/** Undoes `applyStageChange` after the server refused the move, restoring the stage fields it read. */
 export function revertStageChange(
   bundle: ApplicationsBundle,
   applicationId: string,
-  previousStage: string | null,
+  previous: StageSnapshot,
   optimisticEventId: string
 ): ApplicationsBundle {
   return {
+    ...bundle,
     applications: bundle.applications.map((app) =>
-      app.id === applicationId ? { ...app, current_stage: previousStage } : app
+      app.id === applicationId
+        ? {
+            ...app,
+            current_stage: previous.current_stage,
+            status: previous.status,
+            outcome: previous.outcome,
+          }
+        : app
     ),
     events: bundle.events.filter((event) => event.id !== optimisticEventId),
   };

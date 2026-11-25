@@ -132,7 +132,7 @@ const PIPELINE: PipelineAgingRow[] = [
     company: "Globex",
     title: "Staff Engineer",
     stage: "screening",
-    daysInStage: 21,
+    daysSinceActivity: 21,
     appliedAt: "2024-06-01T09:00:00.000Z",
   },
   {
@@ -140,7 +140,7 @@ const PIPELINE: PipelineAgingRow[] = [
     company: "Initech",
     title: "Platform Lead",
     stage: "onsite",
-    daysInStage: 3,
+    daysSinceActivity: 3,
     appliedAt: "2024-06-18T09:00:00.000Z",
   },
 ];
@@ -153,8 +153,8 @@ const ATTENTION: AttentionBundle = {
     { interviewId: "int-2", applicationId: "app-2", scheduledAt: FUTURE(2), stage: null, company: "Initech" },
   ],
   stalled: [
-    { applicationId: "app-1", company: "Globex", title: "Staff Engineer", stage: "screening", daysInStage: 21 },
-    { applicationId: "app-9", company: "Umbrella", title: "Data Lead", stage: "applied", daysInStage: 16 },
+    { applicationId: "app-1", company: "Globex", title: "Staff Engineer", stage: "screening", daysSinceActivity: 21 },
+    { applicationId: "app-9", company: "Umbrella", title: "Data Lead", stage: "applied", daysSinceActivity: 16 },
   ],
   runErrors: [
     {
@@ -162,6 +162,7 @@ const ATTENTION: AttentionBundle = {
       startedAt: "2024-06-19T12:00:00.000Z",
       provider: "Ashby",
       summary: "feed returned 500",
+      severity: "failed",
     },
   ],
 };
@@ -268,7 +269,7 @@ describe("AttentionCard", () => {
     );
     expect(within(stalled!).getByText(`Stalled · ${formatDuration(21)}`)).toBeInTheDocument();
 
-    const errors = screen.getByRole("heading", { name: "Automation errors" }).closest("section");
+    const errors = screen.getByRole("heading", { name: "Automation issues" }).closest("section");
     expect(within(errors!).getByRole("link", { name: /feed returned 500/ })).toHaveAttribute("href", "/runs/run-f1");
 
     const viewAll = screen.getAllByRole("link", { name: /View all/ }).map((link) => link.getAttribute("href"));
@@ -290,12 +291,26 @@ describe("AttentionCard", () => {
     expect(within(upcoming!).getAllByRole("link", { name: /Company/ })).toHaveLength(5);
   });
 
+  it("labels a partial run as partial, not as a failure", () => {
+    const partial: AttentionBundle = {
+      ...NO_ATTENTION,
+      runErrors: [
+        { runId: "run-p1", startedAt: "2024-06-18T12:00:00.000Z", provider: "Lever", summary: null, severity: "partial" },
+      ],
+    };
+    render(<AttentionCard attention={partial} status={READY} />);
+
+    const issues = screen.getByRole("heading", { name: "Automation issues" }).closest("section");
+    expect(within(issues!).getByText("Partial")).toBeInTheDocument();
+    expect(within(issues!).getByText("Run finished with some work not completed")).toBeInTheDocument();
+  });
+
   it("uses a friendly empty text for each list", () => {
     render(<AttentionCard attention={NO_ATTENTION} status={READY} />);
 
     expect(screen.getByText("No interviews in the next 7 days.")).toBeInTheDocument();
     expect(screen.getByText("Nothing stalled. Nice.")).toBeInTheDocument();
-    expect(screen.getByText("No automation errors in the last 7 days.")).toBeInTheDocument();
+    expect(screen.getByText("No automation issues in the last 7 days.")).toBeInTheDocument();
   });
 });
 

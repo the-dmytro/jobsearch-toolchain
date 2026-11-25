@@ -129,7 +129,7 @@ export function AttentionCard({ attention, status }: AttentionCardProps) {
                 <span className="truncate text-xs text-muted-foreground">
                   {row.company} · {stageLabel(row.stage)}
                 </span>
-                <StalledChip days={row.daysInStage} />
+                <StalledChip days={row.daysSinceActivity} />
               </Link>
             </li>
           ))}
@@ -137,18 +137,29 @@ export function AttentionCard({ attention, status }: AttentionCardProps) {
 
         <AttentionList
           headingId="attention-errors"
-          title="Automation errors"
+          title="Automation issues"
           count={runErrors.length}
-          emptyText="No automation errors in the last 7 days."
+          emptyText="No automation issues in the last 7 days."
           viewAllHref="/runs"
           viewAllLabel="automation runs"
         >
           {runErrors.slice(0, ATTENTION_ROW_LIMIT).map((row) => (
             <li key={row.runId}>
-              <Link href={`/runs/${row.runId}`} className={cn(ROW_CLASS, "border-danger/40")}>
-                <span className="truncate font-medium">{row.provider}</span>
+              <Link
+                href={`/runs/${row.runId}`}
+                className={cn(ROW_CLASS, row.severity === "failed" ? "border-danger/40" : "border-warning/40")}
+              >
+                <span className="truncate font-medium">
+                  {row.provider}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {row.severity === "failed" ? "Failed" : "Partial"}
+                  </span>
+                </span>
                 <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {row.summary?.trim() || "Run failed without a message"}
+                  {row.summary?.trim() ||
+                    (row.severity === "failed"
+                      ? "Run failed without a message"
+                      : "Run finished with some work not completed")}
                 </span>
                 <span className="text-xs text-muted-foreground tabular-nums">
                   {formatRelative(row.startedAt)}

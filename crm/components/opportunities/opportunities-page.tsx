@@ -38,8 +38,8 @@ export function OpportunitiesPage() {
     queryKey: qk.opportunities,
     queryFn: async () => {
       const supabase = createClient();
-      return fetchAll<OpportunityListRow>((from, to) =>
-        supabase
+      return fetchAll<OpportunityListRow>((after, limit) => {
+        let query = supabase
           .from("opportunities")
           .select(
             `
@@ -48,7 +48,10 @@ export function OpportunitiesPage() {
           `
           )
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
     },
   });

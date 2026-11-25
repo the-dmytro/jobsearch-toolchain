@@ -87,7 +87,7 @@ describe("MatchScoreCard", () => {
       evaluations: 3,
       withApplication: 2,
       offers: 1,
-      declined: 0,
+      rejected: 0,
       open: 1,
       offerRate: { value: 0.5, n: 2 },
       avgScore: 7.5,

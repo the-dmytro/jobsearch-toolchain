@@ -37,8 +37,8 @@ export function RunsPage() {
     queryKey: qk.runs,
     queryFn: async () => {
       const supabase = createClient();
-      return fetchAll<RunRow>((from, to) =>
-        supabase
+      return fetchAll<RunRow>((after, limit) => {
+        let query = supabase
           .from("automation_runs")
           .select(
             `
@@ -47,7 +47,10 @@ export function RunsPage() {
           `
           )
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
     },
   });

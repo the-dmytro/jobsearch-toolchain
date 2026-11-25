@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { ErrorBoundary } from "@/components/crm/error-boundary";
@@ -23,16 +22,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  fetchInsightsBundle,
-  type CompensationRow,
-  type InsightsBundle,
-  type ScoreOutcomeRow,
-} from "@/lib/analytics";
+import type { CompensationRow, InsightsBundle, ScoreOutcomeRow } from "@/lib/analytics";
+import { useInsightsBundle } from "@/lib/analytics-query";
 import { useDateRange } from "@/lib/date-range-context";
 import { isDemoMode } from "@/lib/demo";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
-import { qk } from "@/lib/query-keys";
 
 /** Rows shown in the decline reasons list before the rest are grouped as "Other". */
 const DECLINE_ROW_LIMIT = 8;
@@ -278,10 +272,7 @@ function InterviewOutcomesCard({ data, rangeText, status }: { data?: InsightsBun
 
 export function InsightsPage() {
   const { value: dateRange } = useDateRange();
-  const query = useQuery({
-    queryKey: qk.insights(dateRange),
-    queryFn: () => fetchInsightsBundle(dateRange.range),
-  });
+  const query = useInsightsBundle(dateRange);
   const data = query.data;
   const rangeText = rangePhrase(dateRange);
 

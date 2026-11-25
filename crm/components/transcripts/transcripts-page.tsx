@@ -47,8 +47,11 @@ export function TranscriptsPage() {
     queryKey: ["transcripts", "artifacts"],
     queryFn: async () => {
       const supabase = createClient();
-      const artifacts = await fetchAll<Tables<"artifacts">>((from, to) =>
-        supabase.from("artifacts").select("*").order("id").range(from, to)
+      const artifacts = await fetchAll<Tables<"artifacts">>((after, limit) => {
+        let query = supabase.from("artifacts").select("*").order("id").limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
       return artifacts
         .filter(isTranscript)

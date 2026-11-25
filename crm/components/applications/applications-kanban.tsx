@@ -16,6 +16,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import { formatDuration, formatNumber } from "@/lib/format";
+import type { CanonicalStage } from "@/lib/stages";
 import { cn } from "@/lib/utils";
 
 import {
@@ -43,9 +44,9 @@ function readDragData(data: unknown): DragData | null {
   return { label: record.label, column: record.column };
 }
 
-/** Stage written to the server for a column. The Closed column records a decline. */
-export function stageForColumn(column: BoardColumn): string {
-  return column === "closed" ? "declined" : column;
+/** Stage written to the server for a column. The Closed column records an employer rejection. */
+export function stageForColumn(column: BoardColumn): CanonicalStage {
+  return column === "closed" ? "rejected" : column;
 }
 
 /** Plain-language announcements for keyboard and screen reader users. */
@@ -124,9 +125,9 @@ function BoardCard({ row, pending }: { row: ApplicationRow; pending: boolean }) 
           <p className="truncate text-xs text-muted-foreground">{company}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             {row.column === "closed" ? <OutcomeBadge outcome={row.outcome} /> : null}
-            {row.daysInStage !== null ? (
+            {row.daysSinceActivity !== null ? (
               <span className={cn("tabular-nums", row.stalled && "font-medium text-warning")}>
-                {formatDuration(row.daysInStage)} in stage
+                Last activity {formatDuration(row.daysSinceActivity)} ago
                 {row.stalled ? " · Stalled" : ""}
               </span>
             ) : null}

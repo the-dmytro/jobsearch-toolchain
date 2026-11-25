@@ -49,8 +49,8 @@ export function CommunicationsPage() {
     queryKey: qk.communications,
     queryFn: async () => {
       const supabase = createClient();
-      const rows = await fetchAll<CommunicationListRow>((from, to) =>
-        supabase
+      const rows = await fetchAll<CommunicationListRow>((after, limit) => {
+        let query = supabase
           .from("communications")
           .select(
             `
@@ -60,7 +60,10 @@ export function CommunicationsPage() {
           `
           )
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
       return rows.sort((a, b) => timeOf(b) - timeOf(a));
     },
@@ -70,12 +73,15 @@ export function CommunicationsPage() {
     queryKey: [...qk.applications, "pick"],
     queryFn: async () => {
       const supabase = createClient();
-      const rows = await fetchAll<ApplicationPick>((from, to) =>
-        supabase
+      const rows = await fetchAll<ApplicationPick>((after, limit) => {
+        let query = supabase
           .from("applications")
           .select("id, opportunities(title)")
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
       return rows;
     },

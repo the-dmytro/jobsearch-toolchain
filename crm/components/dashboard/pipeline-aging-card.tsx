@@ -45,16 +45,16 @@ type PipelineAgingCardProps = {
  */
 export function PipelineAgingCard({ pipeline, status }: PipelineAgingCardProps) {
   const rows = (pipeline ?? []).slice(0, AGING_ROW_LIMIT);
-  const longest = Math.max(1, ...rows.map((row) => row.daysInStage));
+  const longest = Math.max(1, ...rows.map((row) => row.daysSinceActivity));
 
   return (
     <DashboardCard
       title="Pipeline aging"
-      description="Days each open application has been in its current stage, longest first."
+      description="Days since each open application had any activity, longest first."
       status={status}
       isEmpty={rows.length === 0}
       emptyTitle="No open applications"
-      emptyDescription="Open applications appear here with the days they have spent in their stage."
+      emptyDescription="Open applications appear here with the days since their last activity."
       footer={
         (pipeline?.length ?? 0) > AGING_ROW_LIMIT ? (
           <p className="border-t pt-3 text-xs text-muted-foreground">
@@ -76,8 +76,8 @@ export function PipelineAgingCard({ pipeline, status }: PipelineAgingCardProps) 
       </ul>
       <ol className="space-y-1">
         {rows.map((row) => {
-          const bucket = agingBucket(row.daysInStage);
-          const width = (row.daysInStage / longest) * 100;
+          const bucket = agingBucket(row.daysSinceActivity);
+          const width = (row.daysSinceActivity / longest) * 100;
           return (
             <li key={row.applicationId}>
               <Link
@@ -87,7 +87,7 @@ export function PipelineAgingCard({ pipeline, status }: PipelineAgingCardProps) 
                 <div className="flex items-baseline justify-between gap-3 text-sm">
                   <span className="min-w-0 truncate font-medium">{row.title}</span>
                   <span className="shrink-0 text-xs font-medium tabular-nums">
-                    {formatDuration(row.daysInStage)}
+                    {formatDuration(row.daysSinceActivity)}
                   </span>
                 </div>
                 <div aria-hidden="true" className="mt-1 h-2 overflow-hidden rounded-sm bg-muted">

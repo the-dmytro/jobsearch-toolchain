@@ -11,7 +11,7 @@ vi.mock("@/lib/supabase/client", () => ({
     from: () => ({
       select: () => ({
         order: () => ({
-          range: (from: number, to: number) => client.next(from, to),
+          limit: (size: number) => client.next(size),
         }),
       }),
     }),

@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { fetchAll } from "@/lib/fetch-all";
+
+import { fetchAll, type KeysetRow } from "@/lib/fetch-all";
 import { qk } from "@/lib/query-keys";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/types/database.types";
@@ -20,22 +21,38 @@ export type StageEventRow = Pick<
   "id" | "application_id" | "event_type" | "event_at" | "created_at" | "metadata" | "title"
 >;
 
+/** Interview dates and results, for last activity. */
+export type ListInterviewRow = Pick<
+  Tables<"interviews">,
+  "id" | "application_id" | "scheduled_at" | "result"
+>;
+
+/** Communication dates and direction, for last activity. */
+export type ListCommunicationRow = Pick<
+  Tables<"communications">,
+  "id" | "application_id" | "direction" | "sent_at" | "created_at"
+>;
+
 export type ApplicationsBundle = {
   applications: ApplicationWithJoins[];
   events: StageEventRow[];
+  interviews: ListInterviewRow[];
+  communications: ListCommunicationRow[];
 };
 
 const EVENT_COLUMNS = "id, application_id, event_type, event_at, created_at, metadata, title";
+const INTERVIEW_COLUMNS = "id, application_id, scheduled_at, result";
+const COMMUNICATION_COLUMNS = "id, application_id, direction, sent_at, created_at";
 
 /**
- * Loads every application and every event with `fetchAll`, so the list is not
- * cut off at PostgREST's 1000-row cap. Days in stage come from the events.
+ * Loads every application with its joins, and every event, interview and communication that feeds
+ * last activity. Each table is read with `fetchAll`, so the list is not cut off at PostgREST's cap.
  */
 async function fetchApplicationsBundle(): Promise<ApplicationsBundle> {
   const supabase = createClient();
-  const [applications, events] = await Promise.all([
-    fetchAll<ApplicationWithJoins>((from, to) =>
-      supabase
+  const [applications, events, interviews, communications] = await Promise.all([
+    fetchAll<ApplicationWithJoins & KeysetRow>((after, limit) => {
+      let query = supabase
         .from("applications")
         .select(
           `
@@ -45,13 +62,31 @@ async function fetchApplicationsBundle(): Promise<ApplicationsBundle> {
         `
         )
         .order("id")
-        .range(from, to)
-    ),
-    fetchAll<StageEventRow>((from, to) =>
-      supabase.from("application_events").select(EVENT_COLUMNS).order("id").range(from, to)
-    ),
+        .limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<StageEventRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("application_events").select(EVENT_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<ListInterviewRow & KeysetRow>((after, limit) => {
+      let query = supabase.from("interviews").select(INTERVIEW_COLUMNS).order("id").limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
+    fetchAll<ListCommunicationRow & KeysetRow>((after, limit) => {
+      let query = supabase
+        .from("communications")
+        .select(COMMUNICATION_COLUMNS)
+        .order("id")
+        .limit(limit);
+      if (after) query = query.gt("id", after);
+      return query;
+    }),
   ]);
-  return { applications, events };
+  return { applications, events, interviews, communications };
 }
 
 export function useApplicationsQuery() {

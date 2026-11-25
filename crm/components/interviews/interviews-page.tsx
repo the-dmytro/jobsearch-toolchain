@@ -102,8 +102,8 @@ export function InterviewsPage() {
     queryKey: qk.interviews,
     queryFn: async () => {
       const supabase = createClient();
-      return fetchAll<InterviewListRow>((from, to) =>
-        supabase
+      return fetchAll<InterviewListRow>((after, limit) => {
+        let query = supabase
           .from("interviews")
           .select(
             `
@@ -113,7 +113,10 @@ export function InterviewsPage() {
           `
           )
           .order("id")
-          .range(from, to)
+          .limit(limit);
+        if (after) query = query.gt("id", after);
+        return query;
+      }
       );
     },
   });

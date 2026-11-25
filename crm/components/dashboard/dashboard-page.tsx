@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { RefreshCwIcon } from "lucide-react";
 
 import { ErrorBoundary } from "@/components/crm/error-boundary";
@@ -16,10 +15,9 @@ import { SourceEffectivenessCard } from "@/components/dashboard/source-effective
 import { WeeklyActivityCard } from "@/components/dashboard/weekly-activity-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fetchDashboardBundle } from "@/lib/analytics";
+import { useDashboardBundle } from "@/lib/analytics-query";
 import { type DateRangeValue, useDateRange } from "@/lib/date-range-context";
 import { isDemoMode } from "@/lib/demo";
-import { qk } from "@/lib/query-keys";
 
 function rangeSentence(value: DateRangeValue): string {
   const phrase = rangePhrase(value);
@@ -31,10 +29,7 @@ function rangeSentence(value: DateRangeValue): string {
 
 export function DashboardPage() {
   const { value: dateRange } = useDateRange();
-  const query = useQuery({
-    queryKey: qk.dashboard(dateRange),
-    queryFn: () => fetchDashboardBundle(dateRange.range),
-  });
+  const query = useDashboardBundle(dateRange);
   const data = query.data;
 
   // Every card receives the same load state, so each one shows its own skeleton, error or empty state.

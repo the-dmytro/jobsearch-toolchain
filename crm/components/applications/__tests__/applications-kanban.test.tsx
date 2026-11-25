@@ -53,7 +53,7 @@ function application(id: string, stage: string, company = "Acme", role = "Role")
 const NOW = Date.parse("2026-11-25T12:00:00Z");
 
 function bundleOf(applications: ApplicationsBundle["applications"]): ApplicationsBundle {
-  return { applications, events: [] };
+  return { applications, events: [], interviews: [], communications: [] };
 }
 
 function deferred<T>() {
@@ -111,8 +111,8 @@ describe("drag announcements", () => {
     expect(describeDragCancel(data)).toBe("Move cancelled. Acme, Platform Engineer stays in Applied.");
   });
 
-  it("writes the Closed column as a decline, and other columns as their own stage", () => {
-    expect(stageForColumn("closed")).toBe("declined");
+  it("writes the Closed column as a rejection, and other columns as their own stage", () => {
+    expect(stageForColumn("closed")).toBe("rejected");
     expect(stageForColumn("tech_interview")).toBe("tech_interview");
   });
 });
@@ -197,7 +197,7 @@ describe("ApplicationsKanban", () => {
       bundleOf([
         application("app-1", "applied", "Acme", "Platform Engineer"),
         application("app-2", "offer", "Globex", "Data Engineer"),
-        application("app-3", "declined", "Initech", "SRE"),
+        application("app-3", "Rejected after screen", "Initech", "SRE"),
       ]),
       NOW
     );
@@ -212,7 +212,7 @@ describe("ApplicationsKanban", () => {
     }
     const closed = screen.getByRole("region", { name: "Closed" });
     expect(within(closed).getByText("SRE")).toBeInTheDocument();
-    expect(within(closed).getByText("Declined")).toBeInTheDocument();
+    expect(within(closed).getByText("Rejected")).toBeInTheDocument();
   });
 
   it("gives each card a separate Move button, and keeps the role link on the card", () => {

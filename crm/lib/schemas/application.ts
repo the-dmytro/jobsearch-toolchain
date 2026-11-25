@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { CANONICAL_STAGES } from "@/lib/stages";
+
 export const applicationUpdateSchema = z.object({
   id: z.string().uuid(),
   status: z.string().optional(),
@@ -13,7 +15,7 @@ export const applicationUpdateSchema = z.object({
 
 export const stageChangeSchema = z.object({
   applicationId: z.string().uuid(),
-  newStage: z.string().min(1),
+  newStage: z.enum(CANONICAL_STAGES),
 });
 
 export const applicationEventSchema = z.object({

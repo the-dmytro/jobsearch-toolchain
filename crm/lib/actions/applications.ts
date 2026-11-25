@@ -8,7 +8,11 @@ import {
   stageChangeSchema,
 } from "@/lib/schemas/application";
 import { createClient } from "@/lib/supabase/server";
+import { statusAndOutcomeForStage } from "@/lib/stages";
 import type { ActionResult } from "@/lib/types/action-result";
+
+/** Shown when the row no longer holds the stage the board last read. */
+const CHANGED_ELSEWHERE_MESSAGE = "This application changed elsewhere. Refresh and try again.";
 
 function revalidateApplication(applicationId: string) {
   revalidatePath("/applications");
@@ -35,9 +39,34 @@ export async function updateApplication(input: unknown): Promise<ActionResult> {
   }
 }
 
+type StageFields = {
+  current_stage: string | null;
+  status: string;
+  outcome: string | null;
+};
+
 /**
- * Moves an application to a new stage and records a stage_change event. If the event cannot
- * be written, the stage and status are restored to their previous values before returning.
+ * Writes stage fields only where the row still holds `expectedStage`. Returns how many rows
+ * changed: 0 means another writer moved the application first.
+ */
+async function writeIfStageIs(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  applicationId: string,
+  expectedStage: string | null,
+  fields: StageFields
+): Promise<{ changed: number; error: { message: string } | null }> {
+  const base = supabase.from("applications").update(fields).eq("id", applicationId);
+  const guarded =
+    expectedStage === null ? base.is("current_stage", null) : base.eq("current_stage", expectedStage);
+  const { data, error } = await guarded.select("id");
+  return { changed: data?.length ?? 0, error };
+}
+
+/**
+ * Moves an application to a new stage and records a stage_change event. Stage, status and outcome
+ * are written together, so leaving Closed clears the rejection. The write is conditional on the
+ * stage the caller last read. If the event cannot be written, the previous values are restored
+ * under the same condition.
  */
 export async function changeApplicationStage(input: unknown): Promise<ActionResult> {
   const parsed = stageChangeSchema.safeParse(input);
@@ -49,7 +78,7 @@ export async function changeApplicationStage(input: unknown): Promise<ActionResu
 
     const { data: previous, error: readError } = await supabase
       .from("applications")
-      .select("current_stage, status")
+      .select("current_stage, status, outcome")
       .eq("id", applicationId)
       .single();
     if (readError || !previous) {
@@ -57,13 +86,18 @@ export async function changeApplicationStage(input: unknown): Promise<ActionResu
       return fail("Could not find this application.");
     }
 
-    const { error: updateError } = await supabase
-      .from("applications")
-      .update({ current_stage: newStage })
-      .eq("id", applicationId);
-    if (updateError) {
-      logActionError("changeApplicationStage: update failed", updateError);
+    const next = statusAndOutcomeForStage(newStage);
+    const moved = await writeIfStageIs(supabase, applicationId, previous.current_stage, {
+      current_stage: newStage,
+      status: next.status,
+      outcome: next.outcome,
+    });
+    if (moved.error) {
+      logActionError("changeApplicationStage: update failed", moved.error);
       return fail("Could not move the application. Try again.");
+    }
+    if (moved.changed === 0) {
+      return fail(CHANGED_ELSEWHERE_MESSAGE);
     }
 
     const { error: eventError } = await supabase.from("application_events").insert({
@@ -75,12 +109,13 @@ export async function changeApplicationStage(input: unknown): Promise<ActionResu
     });
     if (eventError) {
       logActionError("changeApplicationStage: event insert failed, reverting", eventError);
-      const { error: revertError } = await supabase
-        .from("applications")
-        .update({ current_stage: previous.current_stage, status: previous.status })
-        .eq("id", applicationId);
-      if (revertError) {
-        logActionError("changeApplicationStage: revert failed", revertError);
+      const reverted = await writeIfStageIs(supabase, applicationId, newStage, {
+        current_stage: previous.current_stage,
+        status: previous.status,
+        outcome: previous.outcome,
+      });
+      if (reverted.error || reverted.changed === 0) {
+        logActionError("changeApplicationStage: revert failed", reverted.error ?? "stage changed");
         return fail(
           "The stage change could not be recorded or undone. Refresh and check the stage."
         );

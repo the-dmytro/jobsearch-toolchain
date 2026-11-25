@@ -1,19 +1,35 @@
 /**
- * PostgREST returns at most 1000 rows per request, so an unbounded `select` silently
- * truncates. `fetchAll` walks the table with `.range(from, to)` until a short page.
+ * PostgREST caps each response (1000 rows by default), so an unbounded `select` silently
+ * truncates. `fetchAll` reads a table in keyset pages: each request asks for the rows whose `id`
+ * is greater than the last id already read, ordered by `id`. Offset paging is avoided because a
+ * row written between two requests would shift the window and be skipped or repeated.
  *
- * The caller must supply a stable `order` (for example `order('id')`) inside `build`,
- * otherwise pages can overlap or skip rows.
+ * `build(after, pageSize)` must return a query ordered by `id` that applies `gt('id', after)`
+ * when `after` is set and `limit(pageSize)`. Paging stops on an empty page, not on a short one,
+ * because the server may cap a page below the size asked for. Rows are deduplicated by id.
  */
 export const DEFAULT_PAGE_SIZE = 1000;
 
+export type PageError = { message: string; code?: string };
+
 export type PageResult<T> = {
   data: T[] | null;
-  error: { message: string } | null;
+  error: PageError | null;
 };
 
-export async function fetchAll<T>(
-  build: (from: number, to: number) => PromiseLike<PageResult<T>>,
+export type KeysetRow = { id: string };
+
+/** An Error that keeps the PostgREST or Postgres `code`, so friendly messages can map it. */
+export type QueryError = Error & { code?: string };
+
+export function queryError(error: PageError): QueryError {
+  const err: QueryError = new Error(error.message || "Failed to load rows");
+  if (error.code) err.code = error.code;
+  return err;
+}
+
+export async function fetchAll<T extends KeysetRow>(
+  build: (after: string | null, pageSize: number) => PromiseLike<PageResult<T>>,
   pageSize: number = DEFAULT_PAGE_SIZE
 ): Promise<T[]> {
   if (!Number.isInteger(pageSize) || pageSize < 1) {
@@ -21,14 +37,25 @@ export async function fetchAll<T>(
   }
 
   const rows: T[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await build(from, from + pageSize - 1);
-    if (error) {
-      throw new Error(error.message || "Failed to load rows");
-    }
+  const seen = new Set<string>();
+  let after: string | null = null;
+  for (;;) {
+    const { data, error } = await build(after, pageSize);
+    if (error) throw queryError(error);
+
     const page = data ?? [];
-    for (const row of page) rows.push(row);
-    if (page.length < pageSize) break;
+    if (page.length === 0) break;
+
+    let added = 0;
+    for (const row of page) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+      added += 1;
+    }
+    // A page with nothing new means the builder ignored `after`. Stop rather than loop forever.
+    if (added === 0) break;
+    after = page[page.length - 1].id;
   }
   return rows;
 }

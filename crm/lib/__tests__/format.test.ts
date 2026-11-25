@@ -8,6 +8,7 @@ import {
   formatNumber,
   formatPercent,
   formatRelative,
+  parseDateValue,
   friendlyError,
   getUserLocale,
 } from "@/lib/format";
@@ -158,6 +159,11 @@ describe("formatPercent", () => {
     expect(formatPercent(0)).toBe("0%");
   });
 
+  it("falls back to whole percent when the digit count is not finite", () => {
+    expect(formatPercent(0.4256, Number.NaN)).toBe("43%");
+    expect(formatPercent(0.4256, Number.POSITIVE_INFINITY)).toBe("43%");
+  });
+
   it("treats negative digits as zero", () => {
     expect(formatPercent(0.5, -2)).toBe("50%");
   });
@@ -285,5 +291,22 @@ describe("getUserLocale", () => {
 
   it("exposes the fallback locale constant", () => {
     expect(FALLBACK_LOCALE).toBe("en-GB");
+  });
+});
+
+describe("date-only values", () => {
+  it("reads a YYYY-MM-DD string as a local calendar date, not UTC midnight", () => {
+    const parsed = parseDateValue("2026-11-25");
+    expect(parsed).toEqual(new Date(2026, 10, 25));
+    expect(formatDate("2026-11-25")).toBe("25 Nov 2026");
+  });
+
+  it("rejects a date-only string that does not exist", () => {
+    expect(parseDateValue("2026-02-30")).toBeNull();
+    expect(formatDate("2026-02-30")).toBe(EMPTY_VALUE);
+  });
+
+  it("still reads full timestamps as instants", () => {
+    expect(parseDateValue("2026-11-25T12:00:00.000Z")?.getTime()).toBe(Date.UTC(2026, 10, 25, 12));
   });
 });

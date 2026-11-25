@@ -40,11 +40,32 @@ function resolveLocale(locale?: string): string {
   return locale && isValidLocale(locale) ? locale : FALLBACK_LOCALE;
 }
 
-/** Converts a date-like value to a valid Date, or null when it is not usable. */
-function toValidDate(value: DateInput): Date | null {
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Converts a date-like value to a valid Date, or null when it is not usable. A `YYYY-MM-DD`
+ * string is a calendar date (a `date` column), so it is read as local midnight, not UTC.
+ */
+export function parseDateValue(value: DateInput): Date | null {
   if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") {
+    const match = DATE_ONLY.exec(value);
+    if (match) {
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      const local = new Date(year, month - 1, day);
+      const valid =
+        local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day;
+      return valid ? local : null;
+    }
+  }
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toValidDate(value: DateInput): Date | null {
+  return parseDateValue(value);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -167,7 +188,8 @@ export function formatPercent(
   options: { locale?: string } = {}
 ): string {
   if (!isFiniteNumber(ratio)) return EMPTY_VALUE;
-  const places = Math.max(0, Math.floor(digits));
+  // A non-finite digit count falls back to whole percentages.
+  const places = Number.isFinite(digits) ? Math.min(20, Math.max(0, Math.floor(digits))) : 0;
   return new Intl.NumberFormat(resolveLocale(options.locale), {
     style: "percent",
     minimumFractionDigits: places,

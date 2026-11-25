@@ -18,7 +18,7 @@ export function StageBadge({ column, className }: { column: BoardColumn; classNa
 
 const OUTCOME_CLASS: Record<StageOutcome, string> = {
   offer: "border-success/40 text-success",
-  declined: "border-danger/40 text-danger",
+  rejected: "border-danger/40 text-danger",
   withdrawn: "border-border text-muted-foreground",
   ghosted: "border-border text-muted-foreground",
   active: "border-info/40 text-info",

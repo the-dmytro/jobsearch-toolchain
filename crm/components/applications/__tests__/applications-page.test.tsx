@@ -49,7 +49,7 @@ vi.mock("@/components/applications/use-applications-query", () => ({
   useApplicationsQuery: () => nav.query,
 }));
 
-const STAGES = ["applied", "screening", "tech_interview", "onsite", "offer", "declined"];
+const STAGES = ["Applied", "Phone screen", "Technical interview", "Final interview loop", "Offer meeting", "Rejected"];
 const COMPANIES = [
   { id: "org-acme", name: "Acme" },
   { id: "org-globex", name: "Globex" },
@@ -85,7 +85,7 @@ function makeBundle(count: number): ApplicationsBundle {
       organizations: { name: company.name },
     } as unknown as ApplicationsBundle["applications"][number];
   });
-  return { applications, events: [] };
+  return { applications, events: [], interviews: [], communications: [] };
 }
 
 function setQuery(partial: Partial<typeof nav.query>) {
@@ -240,7 +240,7 @@ describe("ApplicationsPage: states", () => {
   });
 
   it("shows an empty state with a next step when there are no applications", async () => {
-    setQuery({ data: { applications: [], events: [] }, isPending: false });
+    setQuery({ data: { applications: [], events: [], interviews: [], communications: [] }, isPending: false });
     render(<ApplicationsPage />);
 
     expect(await screen.findByText("No applications yet")).toBeInTheDocument();

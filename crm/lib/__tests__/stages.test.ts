@@ -33,9 +33,8 @@ describe("normalizeStage", () => {
     ["system_design", "tech_interview"],
     ["final", "onsite"],
     ["hired", "offer"],
-    ["accepted", "offer"],
-    ["rejected", "declined"],
-    ["declined_archived", "declined"],
+      ["rejected", "rejected"],
+    ["declined_archived", "rejected"],
     ["withdrawn", "withdrawn"],
     ["ghosted", "ghosted"],
   ])("maps the %s alias to %s", (raw, expected) => {
@@ -51,7 +50,7 @@ describe("normalizeStage", () => {
     ["On_Site", "onsite"],
     ["Phone", "screening"],
     ["OFFER-RECEIVED", "offer"],
-    ["Rejected ", "declined"],
+    ["Rejected ", "rejected"],
   ])("folds case, whitespace, hyphens and underscores: %j -> %s", (raw, expected) => {
     expect(normalizeStage(raw)).toBe(expected);
   });
@@ -78,7 +77,7 @@ describe("stageIndex", () => {
     expect(stageIndex("phone")).toBe(1);
     expect(stageIndex("final")).toBe(3);
     expect(stageIndex("offer")).toBe(4);
-    expect(stageIndex("declined")).toBe(-1);
+    expect(stageIndex("rejected")).toBe(-1);
     expect(stageIndex("withdrawn")).toBe(-1);
   });
 
@@ -89,7 +88,7 @@ describe("stageIndex", () => {
 
 describe("isTerminal", () => {
   it("is true for declined, withdrawn and ghosted in any spelling", () => {
-    expect(isTerminal("declined")).toBe(true);
+    expect(isTerminal("rejected")).toBe(true);
     expect(isTerminal("Rejected")).toBe(true);
     expect(isTerminal("withdrew")).toBe(true);
     expect(isTerminal("ghosting")).toBe(true);
@@ -111,12 +110,12 @@ describe("stageProgress", () => {
   });
 
   it("does not show 100% for a declined application", () => {
-    expect(stageProgress("declined")).toEqual({ percent: 20, terminal: "declined" });
+    expect(stageProgress("rejected")).toEqual({ percent: 20, terminal: "rejected" });
   });
 
   it("keeps the furthest real step a terminal application reached", () => {
-    const history = ["screening", "tech_interview", "declined"];
-    expect(stageProgress("declined", history)).toEqual({ percent: 60, terminal: "declined" });
+    const history = ["screening", "tech_interview", "rejected"];
+    expect(stageProgress("rejected", history)).toEqual({ percent: 60, terminal: "rejected" });
     expect(stageProgress("withdrawn", ["onsite", "withdrawn"])).toEqual({
       percent: 80,
       terminal: "withdrawn",
@@ -124,9 +123,9 @@ describe("stageProgress", () => {
   });
 
   it("ignores history entries that are terminal or unknown when finding the furthest step", () => {
-    expect(stageProgress("declined", [null, "ghosted", "mystery"])).toEqual({
+    expect(stageProgress("rejected", [null, "ghosted", "mystery"])).toEqual({
       percent: 20,
-      terminal: "declined",
+      terminal: "rejected",
     });
   });
 
@@ -145,7 +144,7 @@ describe("stageProgress", () => {
 describe("outcome helpers", () => {
   it("maps a stage to its outcome category", () => {
     expect(stageOutcome("hired")).toBe("offer");
-    expect(stageOutcome("rejected")).toBe("declined");
+    expect(stageOutcome("rejected")).toBe("rejected");
     expect(stageOutcome("withdrawn")).toBe("withdrawn");
     expect(stageOutcome("ghosted")).toBe("ghosted");
     expect(stageOutcome("tech")).toBe("active");
@@ -153,8 +152,8 @@ describe("outcome helpers", () => {
 
   it("reads outcome text, returning null for empty or unknown text", () => {
     expect(outcomeFromText("Offer")).toBe("offer");
-    expect(outcomeFromText("declined")).toBe("declined");
-    expect(outcomeFromText("closed")).toBe("declined");
+    expect(outcomeFromText("rejected")).toBe("rejected");
+    expect(outcomeFromText("closed")).toBe("rejected");
     expect(outcomeFromText("active")).toBe("active");
     expect(outcomeFromText(null)).toBeNull();
     expect(outcomeFromText("something else")).toBeNull();
@@ -162,14 +161,14 @@ describe("outcome helpers", () => {
 
   it("prefers an explicit final outcome, then status, then the stage", () => {
     expect(
-      applicationOutcome({ status: "active", current_stage: "onsite", outcome: "declined" })
-    ).toBe("declined");
+      applicationOutcome({ status: "active", current_stage: "onsite", outcome: "rejected" })
+    ).toBe("rejected");
     expect(
       applicationOutcome({ status: "withdrawn", current_stage: "onsite", outcome: null })
     ).toBe("withdrawn");
     expect(
-      applicationOutcome({ status: "active", current_stage: "declined", outcome: null })
-    ).toBe("declined");
+      applicationOutcome({ status: "active", current_stage: "rejected", outcome: null })
+    ).toBe("rejected");
     expect(
       applicationOutcome({ status: "active", current_stage: "offer", outcome: null })
     ).toBe("offer");
@@ -181,17 +180,17 @@ describe("outcome helpers", () => {
   it("counts offers and open applications as open, terminal outcomes as closed", () => {
     expect(isOpenOutcome("active")).toBe(true);
     expect(isOpenOutcome("offer")).toBe(true);
-    expect(isOpenOutcome("declined")).toBe(false);
+    expect(isOpenOutcome("rejected")).toBe(false);
     expect(isOpenOutcome("withdrawn")).toBe(false);
     expect(isOpenOutcome("ghosted")).toBe(false);
   });
 
   it("picks the best outcome across applications: offer > open > withdrawn > ghosted > declined", () => {
-    expect(bestOutcome(["declined", "offer", "active"])).toBe("offer");
-    expect(bestOutcome(["declined", "active"])).toBe("active");
-    expect(bestOutcome(["declined", "withdrawn"])).toBe("withdrawn");
-    expect(bestOutcome(["declined", "ghosted"])).toBe("ghosted");
-    expect(bestOutcome(["declined"])).toBe("declined");
+    expect(bestOutcome(["rejected", "offer", "active"])).toBe("offer");
+    expect(bestOutcome(["rejected", "active"])).toBe("active");
+    expect(bestOutcome(["rejected", "withdrawn"])).toBe("withdrawn");
+    expect(bestOutcome(["rejected", "ghosted"])).toBe("ghosted");
+    expect(bestOutcome(["rejected"])).toBe("rejected");
     expect(bestOutcome([])).toBeNull();
   });
 });
