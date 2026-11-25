@@ -16,15 +16,24 @@ type RunHealthCardProps = {
   status: CardStatus;
 };
 
-function isFailed(run: Tables<"automation_runs">): boolean {
-  return run.status.trim().toLowerCase() === "failed";
+function statusOf(run: Tables<"automation_runs">): string {
+  return run.status.trim().toLowerCase();
 }
+
+function isFailed(run: Tables<"automation_runs">): boolean {
+  return statusOf(run) === "failed";
+}
+
+/** Statuses of a run that has ended. Partial runs ended with warnings, not errors. */
+const ENDED_STATUSES = new Set(["completed", "partial", "failed"]);
 
 /** Compact summary: the latest run, how many recent runs finished without errors, and the last failure. */
 export function RunHealthCard({ runs, lastFailure, status }: RunHealthCardProps) {
   const recentRuns = runs ?? [];
   const latest = recentRuns[0];
-  const finishedWithoutErrors = recentRuns.filter((run) => !isFailed(run)).length;
+  // Runs still going (or with an unknown status) are left out of both numbers.
+  const endedRuns = recentRuns.filter((run) => ENDED_STATUSES.has(statusOf(run)));
+  const finishedWithoutErrors = endedRuns.filter((run) => !isFailed(run)).length;
 
   return (
     <DashboardCard
@@ -58,10 +67,12 @@ export function RunHealthCard({ runs, lastFailure, status }: RunHealthCardProps)
         <div className="min-w-0 space-y-1">
           <dt className="text-xs font-medium text-muted-foreground">Finished without errors</dt>
           <dd className="font-semibold tabular-nums">
-            {recentRuns.length === 0
+            {endedRuns.length === 0
               ? "—"
-              : `${formatNumber(finishedWithoutErrors)} of ${formatNumber(recentRuns.length)}`}
-            <span className="ml-2 text-xs font-normal text-muted-foreground">recent runs</span>
+              : `${formatNumber(finishedWithoutErrors)} of ${formatNumber(endedRuns.length)}`}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              recent runs (partial runs count as finished)
+            </span>
           </dd>
         </div>
 

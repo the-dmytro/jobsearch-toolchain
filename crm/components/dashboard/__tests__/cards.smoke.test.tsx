@@ -454,6 +454,13 @@ describe("WeeklyActivityCard", () => {
 });
 
 describe("RunHealthCard", () => {
+  it("leaves runs that have not ended out of the finished count", () => {
+    const running = { ...RUNS[0], id: "run-running", status: "running" };
+    render(<RunHealthCard runs={[running, ...RUNS]} lastFailure={LAST_FAILURE} status={READY} />);
+
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
   it("shows the latest run, how many finished without errors, and the last failure", () => {
     render(<RunHealthCard runs={RUNS} lastFailure={LAST_FAILURE} status={READY} />);
 
