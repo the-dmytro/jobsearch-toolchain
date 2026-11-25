@@ -1,23 +1,33 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const getUser = vi.fn();
-let capturedCookieOptions: {
-  cookies: { setAll: (cookies: { name: string; value: string; options?: object }[]) => void };
-} | null = null;
+const mocks = vi.hoisted(() => ({
+  getUser: vi.fn(),
+  signOut: vi.fn(),
+  capturedOptions: null as null | {
+    cookies: { setAll: (cookies: { name: string; value: string; options?: object }[]) => void };
+  },
+}));
+
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (_url: string, _key: string, options: unknown) => {
-    capturedCookieOptions = options as typeof capturedCookieOptions;
-    return { auth: { getUser, signOut: vi.fn() } };
+    mocks.capturedOptions = options as typeof mocks.capturedOptions;
+    return { auth: { getUser: mocks.getUser, signOut: mocks.signOut } };
   },
 }));
 
 import { config, proxy } from "@/proxy";
 
 const SUPABASE = "https://abcd.supabase.co";
+const OWNER = { email: "owner@example.com" };
 
-function request(path: string, headers: Record<string, string> = {}) {
-  return new NextRequest(`http://localhost:3000${path}`, { headers });
+function request(path: string, headers: Record<string, string> = {}, base = "http://localhost:3000") {
+  return new NextRequest(`${base}${path}`, { headers });
+}
+
+/** Regex form of the object matcher's source, anchored to the whole path. */
+function matcherFor(source: string): RegExp {
+  return new RegExp(`^${source}$`);
 }
 
 describe("proxy", () => {
@@ -25,34 +35,49 @@ describe("proxy", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", SUPABASE);
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-test-value");
     vi.stubEnv("CRM_OWNER_EMAIL", "owner@example.com");
-    getUser.mockReset();
+    mocks.getUser.mockReset();
+    mocks.signOut.mockReset();
+    mocks.signOut.mockResolvedValue(undefined);
   });
 
   it("applies the CSP header with the same nonce as the forwarded x-nonce header", async () => {
-    getUser.mockResolvedValue({ data: { user: { email: "owner@example.com" } } });
+    mocks.getUser.mockResolvedValue({ data: { user: OWNER } });
     const res = await proxy(request("/applications"));
 
     const csp = res.headers.get("content-security-policy");
-    expect(csp).toBeTruthy();
     const nonce = /'nonce-([^']+)'/.exec(csp ?? "")?.[1];
     expect(nonce).toBeTruthy();
     expect(res.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
   });
 
-  it("forwards refreshed Supabase cookies to the rendered request", async () => {
-    getUser.mockImplementation(async () => {
-      capturedCookieOptions?.cookies.setAll([
-        { name: "sb-token", value: "fresh value", options: {} },
-      ]);
-      return { data: { user: { email: "owner@example.com" } } };
-    });
-    const res = await proxy(request("/applications", { cookie: "sb-token=stale" }));
+  it("sends upgrade-insecure-requests only for https requests", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: OWNER } });
 
-    expect(res.headers.get("x-middleware-request-cookie")).toBe("sb-token=fresh value");
+    const plain = await proxy(request("/applications"));
+    expect(plain.headers.get("content-security-policy")).not.toContain("upgrade-insecure-requests");
+
+    const secure = await proxy(request("/applications", {}, "https://crm.example.com"));
+    expect(secure.headers.get("content-security-policy")).toContain("upgrade-insecure-requests");
+  });
+
+  it("forwards refreshed Supabase cookies, keeping other cookies and the original encoding", async () => {
+    mocks.getUser.mockImplementation(async () => {
+      mocks.capturedOptions?.cookies.setAll([
+        { name: "sb-token", value: "base64-fresh%20value", options: {} },
+      ]);
+      return { data: { user: OWNER } };
+    });
+    const res = await proxy(
+      request("/applications", { cookie: "sb-token=stale; theme=dark" })
+    );
+
+    expect(res.headers.get("x-middleware-request-cookie")).toBe(
+      "theme=dark; sb-token=base64-fresh%20value"
+    );
   });
 
   it("still sets the CSP header on the auth redirect for signed-out users", async () => {
-    getUser.mockResolvedValue({ data: { user: null } });
+    mocks.getUser.mockResolvedValue({ data: { user: null } });
     const res = await proxy(request("/applications"));
 
     expect(res.status).toBe(307);
@@ -61,18 +86,73 @@ describe("proxy", () => {
   });
 
   it("sets the CSP header on the forbidden redirect for non-owners", async () => {
-    getUser.mockResolvedValue({ data: { user: { email: "someone@else.example" } } });
+    mocks.getUser.mockResolvedValue({ data: { user: { email: "someone@else.example" } } });
     const res = await proxy(request("/"));
 
     expect(res.headers.get("location")).toContain("error=forbidden");
     expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   });
 
-  it("matcher excludes static assets and image files", () => {
-    const pattern = new RegExp(`^${(config.matcher[0] as string).replace(/^\//, "\\/")}$`);
-    expect(pattern.test("/_next/static/chunks/app.js")).toBe(false);
-    expect(pattern.test("/_next/image?url=x")).toBe(false);
-    expect(pattern.test("/logo.svg")).toBe(false);
-    expect(pattern.test("/applications")).toBe(true);
+  it("carries clearing Supabase cookies onto the forbidden redirect", async () => {
+    mocks.getUser.mockImplementation(async () => {
+      mocks.capturedOptions?.cookies.setAll([
+        { name: "sb-token", value: "", options: { path: "/", maxAge: 0 } },
+      ]);
+      return { data: { user: { email: "someone@else.example" } } };
+    });
+    const res = await proxy(request("/", { cookie: "sb-token=stale" }));
+
+    expect(res.headers.get("location")).toContain("error=forbidden");
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("sb-token=;"))).toBe(true);
+  });
+
+  it("carries refreshed Supabase cookies onto the signed-out redirect", async () => {
+    mocks.getUser.mockImplementation(async () => {
+      mocks.capturedOptions?.cookies.setAll([
+        { name: "sb-refresh", value: "rotated", options: { path: "/" } },
+      ]);
+      return { data: { user: null } };
+    });
+    const res = await proxy(request("/applications"));
+
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("sb-refresh=rotated"))).toBe(true);
+  });
+
+  describe("matcher", () => {
+    const entry = config.matcher[0];
+
+    it("is the object form with prefetch requests excluded", () => {
+      expect(typeof entry).toBe("object");
+      expect(entry.missing).toEqual([
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ]);
+    });
+
+    it.each([
+      "/_next/static/chunks/app.js",
+      "/_next/image?url=x",
+      "/favicon.ico",
+      "/logo.svg",
+      "/photo.avif",
+      "/fonts/inter.woff2",
+      "/fonts/inter.ttf",
+      "/styles/site.css",
+      "/app.js",
+      "/app.js.map",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/data/export.json",
+      "/site.webmanifest",
+    ])("excludes static asset %s", (path) => {
+      expect(matcherFor(entry.source).test(path)).toBe(false);
+    });
+
+    it.each(["/", "/applications", "/applications/123", "/login", "/auth/callback"])(
+      "includes application route %s",
+      (path) => {
+        expect(matcherFor(entry.source).test(path)).toBe(true);
+      }
+    );
   });
 });

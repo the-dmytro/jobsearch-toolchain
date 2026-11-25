@@ -35,6 +35,29 @@ describe("safeExternalUrl", () => {
     expect(safeExternalUrl("not a url")).toBeNull();
   });
 
+  it("rejects a javascript scheme split by a tab or newline", () => {
+    expect(safeExternalUrl("java\tscript:alert(1)")).toBeNull();
+    expect(safeExternalUrl("java\nscript:alert(1)")).toBeNull();
+    expect(safeExternalUrl("java\r\nscript:alert(1)")).toBeNull();
+  });
+
+  it("rejects an unsafe scheme preceded by leading control characters", () => {
+    expect(safeExternalUrl("\x01javascript:alert(1)")).toBeNull();
+    expect(safeExternalUrl("\x00\x1fjavascript:alert(1)")).toBeNull();
+  });
+
+  it("normalizes leading control characters on a safe URL instead of passing them through", () => {
+    // The URL parser strips leading C0 controls; the scheme check then applies to the
+    // normalized URL, so the result is still an https href.
+    expect(safeExternalUrl("\x01https://example.com")).toBe("https://example.com/");
+  });
+
+  it("rejects scheme-relative and mixed-case javascript URLs", () => {
+    expect(safeExternalUrl("//evil.com")).toBeNull();
+    expect(safeExternalUrl("JAVASCRIPT:alert(1)")).toBeNull();
+    expect(safeExternalUrl("   JavaScript:alert(1)   ")).toBeNull();
+  });
+
   it("returns null for empty, blank and missing values", () => {
     expect(safeExternalUrl("")).toBeNull();
     expect(safeExternalUrl("   ")).toBeNull();

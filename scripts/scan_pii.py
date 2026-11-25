@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan tracked files and staged diffs for PII deny-list matches."""
+"""Scan tracked files and staged diffs for PII deny-list matches and secret-like material."""
 
 from __future__ import annotations
 
@@ -41,6 +41,13 @@ SECRET_RES = (
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"\bgh[oprsu]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+    # Supabase JWT (anon or service_role): three base64url segments, first starts with eyJ.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"),
+    re.compile(r"\bsb_secret_[A-Za-z0-9_-]{20,}"),
+    # OpenAI-style and Anthropic (sk-ant-) keys.
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{10,}"),
 )
 
 
@@ -49,14 +56,17 @@ def _parse_patterns(text: str) -> list[str]:
 
 
 def load_patterns(path: Path, environ: Mapping[str, str] | None = None) -> list[str] | None:
-    """Deny-list patterns from the file, else from PII_DENYLIST, else None (not configured)."""
+    """Deny-list patterns from the file, else from PII_DENYLIST, else None (not configured).
+
+    An empty or comment-only source counts as not configured.
+    """
     if path.exists():
-        return _parse_patterns(path.read_text(encoding="utf-8"))
+        patterns = _parse_patterns(path.read_text(encoding="utf-8"))
+        if patterns:
+            return patterns
     env = os.environ if environ is None else environ
-    value = env.get(DENYLIST_ENV, "")
-    if value.strip():
-        return _parse_patterns(value)
-    return None
+    patterns = _parse_patterns(env.get(DENYLIST_ENV, ""))
+    return patterns or None
 
 
 def tracked_files() -> list[Path]:
@@ -145,10 +155,11 @@ def scan_structural_text(text: str, label: str) -> list[str]:
 
 
 def scan_content(text: str, label: str, patterns: list[str] | None) -> list[str]:
-    """Full scan when a deny-list is configured; generic checks only otherwise."""
-    if patterns is None:
-        return scan_generic_text(text, label)
-    return scan_text(text, patterns, label) + scan_structural_text(text, label)
+    """Structural checks always run; literal deny-list matches only when patterns are configured."""
+    hits = scan_structural_text(text, label)
+    if patterns:
+        hits = scan_text(text, patterns, label) + hits
+    return hits
 
 
 def scan_file(path: Path, patterns: list[str] | None) -> list[str]:
@@ -181,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     if patterns is None:
         print(
             "warning: no PII deny-list configured (.pii-denylist.txt or PII_DENYLIST); "
-            "running generic secret and conflict checks only",
+            "skipping literal deny-list matches, structural and secret checks still run",
             file=sys.stderr,
         )
 

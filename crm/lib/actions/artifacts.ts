@@ -1,9 +1,9 @@
 "use server";
 
-import { isAllowedOwnerEmail, getServerEnv } from "@/lib/env";
+import { getServerEnv, isAllowedOwnerEmail } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isSafeStoragePath } from "@/lib/storage-path";
 import { createClient } from "@/lib/supabase/server";
+import { isSafeStoragePath } from "@/lib/storage-path";
 
 export type ArtifactSignedUrlResult =
   | { ok: true; url: string }
@@ -15,8 +15,11 @@ const SIGNED_URL_TTL_SECONDS = 60;
 const GENERIC_FAILURE = "Could not open the file. Try again.";
 
 /**
- * Signed URL for a stored artifact. The bucket is always the server default from
- * env; callers cannot choose it. Only signed-in owners receive a URL.
+ * Signed URL for an artifact the signed-in owner can see.
+ *
+ * Order matters: validate the path, require a signed-in owner, then look the path up
+ * in `artifacts` with the user-scoped (RLS) client. A URL is signed only when a row
+ * exists, and only in the server's default bucket.
  */
 export async function getArtifactSignedUrl(
   storagePath: string
@@ -39,7 +42,28 @@ export async function getArtifactSignedUrl(
       return { ok: false, message: "You do not have access to this file." };
     }
 
+    const { data: rows, error: lookupError } = await supabase
+      .from("artifacts")
+      .select("storage_bucket")
+      .eq("storage_path", storagePath)
+      .limit(1);
+
+    if (lookupError) {
+      console.error("getArtifactSignedUrl: lookup error", lookupError.message);
+      return { ok: false, message: GENERIC_FAILURE };
+    }
+    const row = rows?.[0];
+    if (!row) {
+      return { ok: false, message: "File not found." };
+    }
+
+    // A row without a bucket means the default bucket; any other bucket is refused.
     const { storageBucket } = getServerEnv();
+    if ((row.storage_bucket ?? storageBucket) !== storageBucket) {
+      console.error("getArtifactSignedUrl: artifact bucket is not the server default");
+      return { ok: false, message: GENERIC_FAILURE };
+    }
+
     const admin = createAdminClient();
     const { data, error } = await admin.storage
       .from(storageBucket)

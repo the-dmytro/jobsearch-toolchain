@@ -10,7 +10,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     nonce,
     supabaseUrl: NEXT_PUBLIC_SUPABASE_URL,
     development: process.env.NODE_ENV === "development",
-    production: process.env.NODE_ENV === "production",
+    upgradeInsecureRequests: request.nextUrl.protocol === "https:",
   });
 
   // Next.js reads the nonce from the request CSP header and applies it to its own
@@ -25,8 +25,17 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
+// Matchers must be literal strings so Next can analyse them at build time.
+// Prefetches (next/link, router prefetch) skip the proxy, per the Next CSP guide.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    {
+      source:
+        "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:ico|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|css|js|map|txt|xml|json|webmanifest)$).*)",
+      missing: [
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ],
+    },
   ],
 };

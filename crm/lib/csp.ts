@@ -5,25 +5,28 @@ export function createNonce(): string {
 
 export type CspOptions = {
   nonce: string;
+  /** Supabase project URL. Only its origin (scheme, host, port) is used. */
   supabaseUrl: string;
+  /** Adds 'unsafe-eval' (React development tooling). Never in production. */
   development: boolean;
-  production: boolean;
+  /** Adds upgrade-insecure-requests. Set only when the request itself is https. */
+  upgradeInsecureRequests: boolean;
 };
 
-/** Returns the websocket form of an https origin, for connect-src. */
+/** Websocket form of an http(s) origin, for connect-src. */
 function toWebSocketOrigin(origin: string): string {
   return origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 }
 
 /**
- * Content-Security-Policy for every page response. Single line so it is valid as
- * a header value. `upgrade-insecure-requests` is production only.
+ * Content-Security-Policy for a page response. Single line so it is valid as a
+ * header value.
  */
 export function buildContentSecurityPolicy({
   nonce,
   supabaseUrl,
   development,
-  production,
+  upgradeInsecureRequests,
 }: CspOptions): string {
   const supabaseOrigin = new URL(supabaseUrl).origin;
   const scriptSrc = [
@@ -44,7 +47,7 @@ export function buildContentSecurityPolicy({
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
-    ...(production ? ["upgrade-insecure-requests"] : []),
+    ...(upgradeInsecureRequests ? ["upgrade-insecure-requests"] : []),
   ];
 
   return directives.join("; ");

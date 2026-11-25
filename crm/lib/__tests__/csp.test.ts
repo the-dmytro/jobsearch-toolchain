@@ -3,8 +3,18 @@ import { buildContentSecurityPolicy, createNonce } from "@/lib/csp";
 
 const SUPABASE = "https://abcd.supabase.co";
 
+function base(overrides: Partial<Parameters<typeof buildContentSecurityPolicy>[0]> = {}) {
+  return buildContentSecurityPolicy({
+    nonce: "abc123",
+    supabaseUrl: SUPABASE,
+    development: false,
+    upgradeInsecureRequests: false,
+    ...overrides,
+  });
+}
+
 function directive(policy: string, name: string): string | undefined {
-  return policy.split("; ").find((d) => d.startsWith(`${name} `) || d === name);
+  return policy.split("; ").find((d) => d === name || d.startsWith(`${name} `));
 }
 
 describe("createNonce", () => {
@@ -17,53 +27,45 @@ describe("createNonce", () => {
 });
 
 describe("buildContentSecurityPolicy", () => {
-  it("sets nonce-based script policy and no unsafe-eval in production", () => {
-    const csp = buildContentSecurityPolicy({
-      nonce: "abc123",
-      supabaseUrl: SUPABASE,
-      development: false,
-      production: true,
-    });
+  it("uses a nonce and strict-dynamic, with no unsafe-eval outside development", () => {
+    const csp = base();
     expect(directive(csp, "script-src")).toBe(
       "script-src 'self' 'nonce-abc123' 'strict-dynamic'"
     );
     expect(csp).not.toContain("unsafe-eval");
-    expect(csp).toContain("upgrade-insecure-requests");
   });
 
-  it("adds unsafe-eval only in development and omits upgrade-insecure-requests", () => {
-    const csp = buildContentSecurityPolicy({
-      nonce: "abc123",
-      supabaseUrl: SUPABASE,
-      development: true,
-      production: false,
-    });
-    expect(directive(csp, "script-src")).toContain("'unsafe-eval'");
-    expect(csp).not.toContain("upgrade-insecure-requests");
+  it("adds unsafe-eval only in development", () => {
+    expect(directive(base({ development: true }), "script-src")).toContain("'unsafe-eval'");
+    expect(base({ development: false })).not.toContain("unsafe-eval");
   });
 
-  it("allows the Supabase origin for images and connections, including websockets", () => {
-    const csp = buildContentSecurityPolicy({
-      nonce: "n",
-      supabaseUrl: `${SUPABASE}/`,
-      development: false,
-      production: true,
-    });
+  it("adds upgrade-insecure-requests only when the request is https", () => {
+    expect(base({ upgradeInsecureRequests: true })).toContain("upgrade-insecure-requests");
+    expect(base({ upgradeInsecureRequests: false })).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("uses only the origin of a Supabase URL that has a port and a path", () => {
+    const csp = base({ supabaseUrl: "https://abcd.supabase.co:8443/rest/v1/?x=1" });
     expect(directive(csp, "img-src")).toBe(
-      `img-src 'self' data: blob: ${SUPABASE}`
+      "img-src 'self' data: blob: https://abcd.supabase.co:8443"
     );
+    expect(directive(csp, "connect-src")).toBe(
+      "connect-src 'self' https://abcd.supabase.co:8443 wss://abcd.supabase.co:8443"
+    );
+    expect(csp).not.toContain("/rest/v1");
+  });
+
+  it("allows the Supabase origin for images and websocket connections", () => {
+    const csp = base({ supabaseUrl: `${SUPABASE}/` });
+    expect(directive(csp, "img-src")).toBe(`img-src 'self' data: blob: ${SUPABASE}`);
     expect(directive(csp, "connect-src")).toBe(
       `connect-src 'self' ${SUPABASE} wss://abcd.supabase.co`
     );
   });
 
   it("includes the hardening directives and is a single line", () => {
-    const csp = buildContentSecurityPolicy({
-      nonce: "n",
-      supabaseUrl: SUPABASE,
-      development: false,
-      production: true,
-    });
+    const csp = base({ upgradeInsecureRequests: true });
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).toContain("font-src 'self' data:");
