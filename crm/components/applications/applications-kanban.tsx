@@ -222,7 +222,7 @@ export function ApplicationsKanban({ rows }: { rows: ApplicationRow[] }) {
       onDragEnd={onDragEnd}
       accessibility={{ announcements, screenReaderInstructions: { draggable: SCREEN_READER_INSTRUCTIONS } }}
     >
-      <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-6 md:overflow-visible md:px-0">
+      <div className="relative -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-6 md:overflow-visible md:px-0">
         {BOARD_COLUMNS.map((column) => {
           const cards = groups.get(column) ?? [];
           return (

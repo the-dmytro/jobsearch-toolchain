@@ -104,8 +104,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <ThemeToggle />
         </div>
       </header>
-      {/* overflow-x-clip: a child that is wider than the page clips here instead of widening the document. Wide tables and the stage board scroll in their own containers. */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-x-clip p-4 md:p-6">{children}</div>
+      {/* overflow-x-clip: a child that is wider than the page clips here instead of widening the document. relative: absolutely positioned descendants such as sr-only text are clipped here too. Wide tables and the stage board scroll in their own containers. */}
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-x-clip p-4 md:p-6">{children}</div>
     </>
   );
 }
